@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import pytest
 from fastmcp.client import Client
-from fastmcp.client.transports import FastMCPTransport
 
 from l6e_mcp import server as srv
 from l6e_mcp.server import mcp
@@ -11,14 +10,16 @@ from l6e_mcp.server import mcp
 
 @pytest.fixture(autouse=True)
 def reset_sessions(tmp_path, monkeypatch):
-    """Clear session registry and redirect log writes to tmp_path before every test.
+    """Redirect all local persistence to tmp_path before every test.
 
-    The autouse=True ensures every test starts with a clean registry and a
-    writable log path — critical because l6e_session_start reads L6E_LOG_PATH
-    at call time and the default relative path fails under Windsurf's cwd=/ issue.
+    The autouse=True ensures every test starts with isolated SQLite state,
+    active session files, and a writable log path.
     """
     srv._sessions.clear()
     monkeypatch.setenv("L6E_LOG_PATH", str(tmp_path / "runs.jsonl"))
+    monkeypatch.setenv("L6E_SESSION_DB_PATH", str(tmp_path / "sessions.db"))
+    monkeypatch.setattr(srv, "_ACTIVE_SESSION_FILE", tmp_path / "active_session")
+    monkeypatch.setattr(srv, "_ACTIVE_CALL_FILE", tmp_path / "active_call")
     yield
     srv._sessions.clear()
 

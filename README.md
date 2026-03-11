@@ -1,23 +1,82 @@
 # l6e-mcp
 
+[![pytest](https://github.com/l6e-ai/l6e-mcp/actions/workflows/pytest.yml/badge.svg?branch=main)](https://github.com/l6e-ai/l6e-mcp/actions/workflows/pytest.yml)
+[![mypy](https://github.com/l6e-ai/l6e-mcp/actions/workflows/mypy.yml/badge.svg?branch=main)](https://github.com/l6e-ai/l6e-mcp/actions/workflows/mypy.yml)
+[![ruff](https://github.com/l6e-ai/l6e-mcp/actions/workflows/ruff.yml/badge.svg?branch=main)](https://github.com/l6e-ai/l6e-mcp/actions/workflows/ruff.yml)
+
 Session-scoped budget enforcement for AI coding assistants via the [Model Context Protocol](https://modelcontextprotocol.io/).
 
-Wraps the [l6e](https://github.com/your-org/l6e) OSS enforcement runtime and exposes four MCP tools that let Cursor, Claude Code, and Windsurf enforce per-session LLM budgets before any cloud infrastructure exists.
+Wraps the [l6e](https://github.com/your-org/l6e) OSS enforcement runtime and exposes five MCP tools that let Cursor, Claude Code, and Windsurf enforce per-session LLM budgets before any cloud infrastructure exists.
 
 ## Tools
 
 | Tool | Purpose |
 |---|---|
-| `l6e_session_start` | Open a new budget session. Returns `session_id`. |
-| `l6e_checkpoint` | Gate-check a pending tool call. Returns `allow`, `reroute`, or `halt`. |
+| `l6e_session_start` | Open a new budget session and declare accounting mode/channel. Returns `session_id`. |
+| `l6e_checkpoint` | Gate-check a pending tool call, create a durable `call_id`, and return correlation hints. |
+| `l6e_reconcile_call` | Attach exact usage to an existing pending `call_id` (idempotent for same values). |
 | `l6e_spend` | Read-only spend snapshot for the current session. |
 | `l6e_session_end` | Close the session and flush the run log to `.l6e/runs.jsonl`. |
+
+## Pipeline overview
+
+The MCP pipeline has two layers:
+
+1. Session/checkpoint/reconciliation tools in `src/l6e_mcp/server.py`
+2. Shared core contracts/services in `src/l6e_mcp/core/`, `src/l6e_mcp/contracts/`, and `src/l6e_mcp/store/`
+3. Advanced self-hosted LiteLLM adapters in `src/l6e_mcp/litellm_proxy/` and `src/l6e_mcp/integrations/litellm/`
+
+Core MCP-session functions:
+
+| Function | Role |
+|---|---|
+| `_make_session_id` | Builds the per-task session ID. |
+| `_get_log_path` | Reads `L6E_LOG_PATH` when an explicit run-log path is configured. |
+| `_get_session_store` | Resolves the local SQLite-backed session/call store. |
+| `l6e_session_start` | Creates a persisted local session record with `accounting_mode` / `usage_channel` metadata. |
+| `l6e_checkpoint` | Produces a budget decision, creates a persisted pending or reconciled call record, and returns a stable `call_id`. |
+| `l6e_reconcile_call` | Updates an existing pending call with exact token usage and optional hosted-ledger metadata. |
+| `l6e_spend` | Returns the current spend snapshot derived from persisted call rows. |
+| `l6e_session_end` | Finalizes the session, appends the run log, and clears active proxy files when applicable. |
+
+Advanced self-hosted callback functions for actual token reconciliation:
+
+| Function | Role |
+|---|---|
+| `_read_active_session` | Reads the session handshake file used by proxy mode. |
+| `_read_active_call` | Reads the local fallback `call_id` pointer used when the host cannot attach request metadata. |
+| `_normalize_payload` | Normalizes LiteLLM callback payload shapes. |
+| `_extract_usage` | Pulls `prompt_tokens` and `completion_tokens` from the callback payload. |
+| `_extract_model` | Extracts the reported model name for stage labeling. |
+| `_extract_call_correlation` | Pulls `l6e_call_id` from LiteLLM metadata or request tags when available. |
+| `_call_l6e_reconcile_call` | Sends actual token counts back to the MCP HTTP transport for reconciliation. |
+| `litellm_success_callback` | Main webhook endpoint for successful LiteLLM responses. |
+| `health` | Health endpoint for the callback server. |
+
+For a deeper write-up of constraints and trade-offs, see
+`../docs/mcp-budget-enforcement-constraints.md`. For the advanced self-hosted
+proxy setup, see `../docs/mcp-setup-litellm-proxy.md`. For the hosted-edge
+design seam, see `../docs/mcp-hosted-edge-contract.md` and
+`../docs/mcp-hosted-edge-relay.md`.
 
 ## Quick start
 
 ```bash
 pip install l6e-mcp
 ```
+
+By default, `l6e-mcp` is an estimate-first OSS workflow:
+- pre-call budget enforcement via `l6e_checkpoint`
+- local SQLite-backed session state
+- local `.l6e/runs.jsonl` run logs
+- optional manual reconciliation against provider or IDE billing views
+
+Exact real-time accounting is a separate concern from local budget gating. The
+self-hosted LiteLLM path remains available as an advanced fallback, but the
+long-term product direction is:
+- OSS: high-quality estimates plus local enforcement
+- hosted product: hosted-ledger-first exact accounting and synchronized spend telemetry
+- enterprise: self-hosted relay or connector
 
 See the setup guides in `docs/` for client-specific configuration:
 
@@ -30,9 +89,32 @@ See the setup guides in `docs/` for client-specific configuration:
 | Variable | Default | Purpose |
 |---|---|---|
 | `L6E_LOG_PATH` | `.l6e/runs.jsonl` (relative to cwd) | Override the run log path. **Required for Windsurf** — see setup guide. |
+| `L6E_SESSION_DB_PATH` | `~/.l6e/sessions.db` | Override the local SQLite database used for session and call persistence. |
 
 ## Known limitations
 
-- **No session GC.** Sessions persist in memory until `l6e_session_end` is called or the MCP server process exits. If the client crashes before calling `l6e_session_end`, the run log for that session is never written. Always include `l6e_session_end` in your system prompt.
-- **No concurrent session isolation.** The session registry is a plain in-process dict. Concurrent sessions are supported, but the server is single-process — this is appropriate for local stdio transport.
+- **Local persistence is authoritative, not cloud-backed.** Sessions and calls now persist in a local SQLite database so stdio and HTTP MCP processes can share state, but there is still no remote sync or team-level control plane in OSS.
+- **Metadata correlation is only as strong as the host request path.** The callback server now prefers `metadata.spend_logs_metadata.l6e_call_id` and compatible request tags, and only falls back to `active_call` for hosts that cannot yet attach metadata. Unknown callbacks are quarantined as orphan diagnostics instead of being silently misapplied.
+- **OSS exact accounting is not the primary Cursor path.** The optional LiteLLM proxy path is still useful for advanced self-hosted workflows, but Cursor's private-network restrictions and mode-specific routing behavior make it unsuitable as the main exact-accounting story for every user.
 - **Rerouting is advisory only.** When `l6e_checkpoint` returns `"action": "reroute"`, it is a signal to the agent to prompt the user to select a cheaper model in their IDE settings. The MCP protocol has no primitive for forcing a model switch — no MCP server can instruct a host client (Cursor, Windsurf, Claude Code) to change its active model programmatically. Automatic model rerouting is a planned future feature pending MCP spec support.
+
+## OSS vs Paid
+
+OSS owns the correctness-critical local workflow:
+- session-scoped enforcement
+- proportional estimates before expensive work
+- local run logs and debuggable session state
+- manual or post-hoc reconciliation workflows
+
+Paid tiers should add exact accounting and the connected control plane:
+- hosted public edge for authoritative token accounting
+- synced session history across machines
+- team governance and shared budgets
+- dashboards, orphan-callback views, and anomaly detection
+- privacy controls and retention guarantees for hosted relay traffic
+- cross-customer policy recommendations and profiler intelligence
+
+Advanced self-hosted exact accounting should remain available, but as a power
+user or enterprise path rather than the default value proposition:
+- self-operated public relay or tunnel
+- private-network connector deployment

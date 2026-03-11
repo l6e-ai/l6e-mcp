@@ -1,0 +1,13 @@
+l6e>=0.1.0
+fastmcp>=2.0
+
+[dev]
+pytest>=8.0
+pytest-asyncio>=0.23
+httpx>=0.27.0
+
+[proxy]
+litellm[proxy]>=1.0.0
+fastapi>=0.110.0
+uvicorn>=0.29.0
+httpx>=0.27.0
