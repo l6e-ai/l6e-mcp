@@ -21,6 +21,8 @@ from l6e._types import (
 )
 
 from l6e_mcp.contracts.exactness import ExactnessState
+from l6e_mcp.contracts.mode_coverage import ModeCoverage, mode_exact_capable_for_call_mode
+from l6e_mcp.core.exactness import normalize_call_exactness_state
 from l6e_mcp.store import schema as store_schema
 
 _DEFAULT_DB_PATH = Path.home() / ".l6e" / "sessions.db"
@@ -45,6 +47,10 @@ class SessionState:
     created_at: float
     ended_at: float | None
     finalized_at: float | None
+    advanced_fallback_enabled: bool
+    ask_mode_exact_capable: bool
+    plan_mode_exact_capable: bool
+    agent_mode_exact_capable: bool
 
     @property
     def proxy_mode(self) -> bool:
@@ -83,6 +89,8 @@ class CallState:
     actor_id: str | None
     actor_name: str | None
     parent_call_id: str | None
+    call_mode: str | None
+    mode_exact_capable: bool | None
 
     def effective_record(self) -> CallRecord:
         prompt_tokens = (
@@ -146,6 +154,10 @@ class LocalSessionStore:
                     proxy_mode INTEGER NOT NULL,
                     accounting_mode TEXT NOT NULL DEFAULT 'estimate_only',
                     usage_channel TEXT NOT NULL DEFAULT 'none',
+                    advanced_fallback_enabled INTEGER NOT NULL DEFAULT 0,
+                    ask_mode_exact_capable INTEGER NOT NULL DEFAULT 0,
+                    plan_mode_exact_capable INTEGER NOT NULL DEFAULT 0,
+                    agent_mode_exact_capable INTEGER NOT NULL DEFAULT 0,
                     state TEXT NOT NULL,
                     next_call_index INTEGER NOT NULL,
                     created_at REAL NOT NULL,
@@ -186,6 +198,8 @@ class LocalSessionStore:
                     actor_id TEXT,
                     actor_name TEXT,
                     parent_call_id TEXT,
+                    call_mode TEXT,
+                    mode_exact_capable INTEGER,
                     FOREIGN KEY(session_id) REFERENCES sessions(session_id)
                 )
                 """
@@ -225,11 +239,37 @@ class LocalSessionStore:
             _ensure_column(conn, "sessions", "usage_channel", "TEXT NOT NULL DEFAULT 'none'")
             _ensure_column(
                 conn,
+                "sessions",
+                "advanced_fallback_enabled",
+                "INTEGER NOT NULL DEFAULT 0",
+            )
+            _ensure_column(
+                conn,
+                "sessions",
+                "ask_mode_exact_capable",
+                "INTEGER NOT NULL DEFAULT 0",
+            )
+            _ensure_column(
+                conn,
+                "sessions",
+                "plan_mode_exact_capable",
+                "INTEGER NOT NULL DEFAULT 0",
+            )
+            _ensure_column(
+                conn,
+                "sessions",
+                "agent_mode_exact_capable",
+                "INTEGER NOT NULL DEFAULT 0",
+            )
+            _ensure_column(
+                conn,
                 "calls",
                 "exactness_state",
                 "TEXT NOT NULL DEFAULT 'estimate_only'",
             )
             _ensure_column(conn, "calls", "hosted_ledger_id", "TEXT")
+            _ensure_column(conn, "calls", "call_mode", "TEXT")
+            _ensure_column(conn, "calls", "mode_exact_capable", "INTEGER")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS reconciliation_attempts (
@@ -272,6 +312,10 @@ class LocalSessionStore:
         proxy_mode: bool = False,
         accounting_mode: str | None = None,
         usage_channel: str | None = None,
+        advanced_fallback_enabled: bool = False,
+        ask_mode_exact_capable: bool | None = None,
+        plan_mode_exact_capable: bool | None = None,
+        agent_mode_exact_capable: bool | None = None,
     ) -> SessionState:
         created_at = time.time()
         effective_accounting_mode = accounting_mode or (
@@ -284,14 +328,35 @@ class LocalSessionStore:
             if proxy_mode
             else store_schema.USAGE_CHANNEL_NONE
         )
+        default_coverage = _default_mode_coverage(
+            usage_channel=effective_usage_channel,
+            accounting_mode=effective_accounting_mode,
+        )
+        resolved_ask = (
+            default_coverage.ask_mode_exact_capable
+            if ask_mode_exact_capable is None
+            else ask_mode_exact_capable
+        )
+        resolved_plan = (
+            default_coverage.plan_mode_exact_capable
+            if plan_mode_exact_capable is None
+            else plan_mode_exact_capable
+        )
+        resolved_agent = (
+            default_coverage.agent_mode_exact_capable
+            if agent_mode_exact_capable is None
+            else agent_mode_exact_capable
+        )
         with self._connect() as conn:
             conn.execute(
                 """
                 INSERT INTO sessions (
                     session_id, model, policy_json, source, log_path, proxy_mode,
-                    accounting_mode, usage_channel, state, next_call_index,
+                    accounting_mode, usage_channel, advanced_fallback_enabled,
+                    ask_mode_exact_capable,
+                    plan_mode_exact_capable, agent_mode_exact_capable, state, next_call_index,
                     created_at, ended_at, finalized_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, ?, NULL, NULL)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, ?, NULL, NULL)
                 """,
                 (
                     session_id,
@@ -302,6 +367,10 @@ class LocalSessionStore:
                     int(proxy_mode),
                     effective_accounting_mode,
                     effective_usage_channel,
+                    int(advanced_fallback_enabled),
+                    int(resolved_ask),
+                    int(resolved_plan),
+                    int(resolved_agent),
                     created_at,
                 ),
             )
@@ -321,7 +390,7 @@ class LocalSessionStore:
     def require_active_session(self, session_id: str) -> SessionState:
         session = self.get_session(session_id)
         if session is None:
-            raise KeyError(f"Unknown session '{session_id}'. Call l6e_session_start first.")
+            raise KeyError(f"Unknown session '{session_id}'. Call l6e_run_start first.")
         if session.state == "finalized":
             raise KeyError(f"Unknown session '{session_id}'. Already ended or never started.")
         return session
@@ -350,6 +419,7 @@ class LocalSessionStore:
         actor_id: str | None = None,
         actor_name: str | None = None,
         parent_call_id: str | None = None,
+        call_mode: str | None = None,
         exactness_state: str | None = None,
         hosted_ledger_id: str | None = None,
     ) -> CallState:
@@ -361,25 +431,30 @@ class LocalSessionStore:
             row = conn.execute(
                 """
                 SELECT state, next_call_index
-                       , accounting_mode
+                       , accounting_mode, ask_mode_exact_capable, plan_mode_exact_capable,
+                         agent_mode_exact_capable
                 FROM sessions
                 WHERE session_id = ?
                 """,
                 (session_id,),
             ).fetchone()
             if row is None:
-                raise KeyError(f"Unknown session '{session_id}'. Call l6e_session_start first.")
+                raise KeyError(f"Unknown session '{session_id}'. Call l6e_run_start first.")
             if row["state"] == "finalized":
                 raise KeyError(f"Unknown session '{session_id}'. Already ended or never started.")
             call_index = int(row["next_call_index"])
-            resolved_exactness_state = exactness_state
-            if resolved_exactness_state is None:
-                if status == "reconciled":
-                    resolved_exactness_state = ExactnessState.EXACT_RECORDED.value
-                elif row["accounting_mode"] == store_schema.ACCOUNTING_MODE_ESTIMATE_ONLY:
-                    resolved_exactness_state = ExactnessState.ESTIMATE_ONLY.value
-                else:
-                    resolved_exactness_state = ExactnessState.EXACT_PENDING.value
+            coverage = ModeCoverage(
+                ask_mode_exact_capable=bool(row["ask_mode_exact_capable"]),
+                plan_mode_exact_capable=bool(row["plan_mode_exact_capable"]),
+                agent_mode_exact_capable=bool(row["agent_mode_exact_capable"]),
+            )
+            mode_exact_capable = mode_exact_capable_for_call_mode(coverage, call_mode)
+            resolved_exactness_state = normalize_call_exactness_state(
+                exactness_state,
+                status=status,
+                accounting_mode=str(row["accounting_mode"]),
+                mode_exact_capable=mode_exact_capable,
+            ).value
             conn.execute(
                 "UPDATE sessions SET next_call_index = ? WHERE session_id = ?",
                 (call_index + 1, session_id),
@@ -393,10 +468,11 @@ class LocalSessionStore:
                     rerouted, elapsed_ms, prompt_complexity, is_multi_turn, status,
                     created_at, reconciled_at, correlation_key, correlation_source,
                     callback_request_id, callback_trace_id, actor_type, actor_id,
-                    actor_name, parent_call_id, exactness_state, hosted_ledger_id
+                    actor_name, parent_call_id, call_mode, mode_exact_capable, exactness_state,
+                    hosted_ledger_id
                 ) VALUES (
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?
                 )
                 """,
                 (
@@ -427,6 +503,8 @@ class LocalSessionStore:
                     actor_id,
                     actor_name,
                     parent_call_id,
+                    call_mode.strip().lower() if call_mode is not None else None,
+                    int(mode_exact_capable) if mode_exact_capable is not None else None,
                     resolved_exactness_state,
                     hosted_ledger_id,
                 ),
@@ -439,7 +517,12 @@ class LocalSessionStore:
     def get_call(self, call_id: str) -> CallState | None:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT * FROM calls WHERE call_id = ?",
+                """
+                SELECT c.*, s.accounting_mode AS session_accounting_mode
+                FROM calls c
+                JOIN sessions s ON s.session_id = c.session_id
+                WHERE c.call_id = ?
+                """,
                 (call_id,),
             ).fetchone()
         return _call_from_row(row) if row is not None else None
@@ -448,8 +531,10 @@ class LocalSessionStore:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT * FROM calls
-                WHERE session_id = ?
+                SELECT c.*, s.accounting_mode AS session_accounting_mode
+                FROM calls c
+                JOIN sessions s ON s.session_id = c.session_id
+                WHERE c.session_id = ?
                 ORDER BY call_index ASC
                 """,
                 (session_id,),
@@ -460,8 +545,10 @@ class LocalSessionStore:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT * FROM calls
-                WHERE session_id = ? AND status = 'pending'
+                SELECT c.*, s.accounting_mode AS session_accounting_mode
+                FROM calls c
+                JOIN sessions s ON s.session_id = c.session_id
+                WHERE c.session_id = ? AND c.status = 'pending'
                 ORDER BY call_index DESC
                 LIMIT 1
                 """,
@@ -473,8 +560,10 @@ class LocalSessionStore:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT * FROM calls
-                WHERE correlation_key = ? AND status = 'pending'
+                SELECT c.*, s.accounting_mode AS session_accounting_mode
+                FROM calls c
+                JOIN sessions s ON s.session_id = c.session_id
+                WHERE c.correlation_key = ? AND c.status = 'pending'
                 ORDER BY call_index DESC
                 LIMIT 1
                 """,
@@ -833,6 +922,10 @@ def _session_from_row(row: sqlite3.Row) -> SessionState:
         finalized_at=(
             float(row["finalized_at"]) if row["finalized_at"] is not None else None
         ),
+        advanced_fallback_enabled=bool(row["advanced_fallback_enabled"]),
+        ask_mode_exact_capable=bool(row["ask_mode_exact_capable"]),
+        plan_mode_exact_capable=bool(row["plan_mode_exact_capable"]),
+        agent_mode_exact_capable=bool(row["agent_mode_exact_capable"]),
     )
 
 
@@ -841,6 +934,20 @@ def _call_from_row(row: sqlite3.Row) -> CallState:
         PromptComplexity(str(row["prompt_complexity"]))
         if row["prompt_complexity"] is not None
         else None
+    )
+    accounting_mode = (
+        str(row["session_accounting_mode"])
+        if "session_accounting_mode" in row and row["session_accounting_mode"] is not None
+        else store_schema.ACCOUNTING_MODE_ESTIMATE_ONLY
+    )
+    mode_exact_capable = (
+        bool(row["mode_exact_capable"]) if row["mode_exact_capable"] is not None else None
+    )
+    normalized_exactness = normalize_call_exactness_state(
+        str(row["exactness_state"]) if row["exactness_state"] is not None else None,
+        status=str(row["status"]),
+        accounting_mode=accounting_mode,
+        mode_exact_capable=mode_exact_capable,
     )
     return CallState(
         call_id=str(row["call_id"]),
@@ -884,11 +991,7 @@ def _call_from_row(row: sqlite3.Row) -> CallState:
         callback_trace_id=(
             str(row["callback_trace_id"]) if row["callback_trace_id"] is not None else None
         ),
-        exactness_state=(
-            str(row["exactness_state"])
-            if row["exactness_state"] is not None
-            else ExactnessState.ESTIMATE_ONLY.value
-        ),
+        exactness_state=normalized_exactness.value,
         hosted_ledger_id=(
             str(row["hosted_ledger_id"]) if row["hosted_ledger_id"] is not None else None
         ),
@@ -898,6 +1001,8 @@ def _call_from_row(row: sqlite3.Row) -> CallState:
         parent_call_id=(
             str(row["parent_call_id"]) if row["parent_call_id"] is not None else None
         ),
+        call_mode=str(row["call_mode"]) if row["call_mode"] is not None else None,
+        mode_exact_capable=mode_exact_capable,
     )
 
 
@@ -907,6 +1012,19 @@ def _estimator_for_policy(policy: PipelinePolicy):
     return LiteLLMCostEstimator(
         fallback_cost_per_1k_tokens=policy.unknown_model_cost_per_1k_tokens
     )
+
+
+def _default_mode_coverage(*, usage_channel: str, accounting_mode: str) -> ModeCoverage:
+    if accounting_mode == store_schema.ACCOUNTING_MODE_ESTIMATE_ONLY:
+        return ModeCoverage(False, False, False)
+    if usage_channel == store_schema.USAGE_CHANNEL_HOSTED_EDGE:
+        return ModeCoverage(True, True, True)
+    if usage_channel == store_schema.USAGE_CHANNEL_SELF_HOSTED_RELAY:
+        # Cursor Ask/Plan can route via proxy today; Agent mode often cannot.
+        return ModeCoverage(True, True, False)
+    if usage_channel == store_schema.USAGE_CHANNEL_MANUAL_IMPORT:
+        return ModeCoverage(False, False, False)
+    return ModeCoverage(False, False, False)
 
 
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, column_type: str) -> None:

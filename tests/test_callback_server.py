@@ -6,7 +6,7 @@ import json
 from l6e_mcp.litellm_proxy import callback_server as cb
 
 
-async def test_call_l6e_reconcile_call_uses_fastmcp_transport(monkeypatch):
+async def test_call_l6e_record_usage_uses_fastmcp_transport(monkeypatch):
     """Callback forwarding should target the FastMCP HTTP transport at /mcp."""
 
     captured: dict[str, object] = {}
@@ -35,7 +35,7 @@ async def test_call_l6e_reconcile_call_uses_fastmcp_transport(monkeypatch):
     monkeypatch.setattr(cb, "Client", FakeClient)
     monkeypatch.setattr(cb, "MCP_HTTP_URL", "http://127.0.0.1:8000/")
 
-    result = await cb._call_l6e_reconcile_call(
+    result = await cb._call_l6e_record_usage(
         call_id="call_deadbeef",
         prompt_tokens=123,
         completion_tokens=45,
@@ -44,7 +44,7 @@ async def test_call_l6e_reconcile_call_uses_fastmcp_transport(monkeypatch):
 
     assert captured["transport"] == "http://127.0.0.1:8000/mcp"
     assert captured["timeout"] == 5.0
-    assert captured["tool_name"] == "l6e_reconcile_call"
+    assert captured["tool_name"] == "l6e_record_usage"
     assert captured["raise_on_error"] is False
     assert captured["arguments"] == {
         "call_id": "call_deadbeef",
@@ -132,7 +132,7 @@ async def test_success_callback_prefers_metadata_call_id_over_active_call(tmp_pa
         captured["correlation_source"] = correlation_source
         return {"status": "reconciled"}
 
-    monkeypatch.setattr(cb, "_call_l6e_reconcile_call", fake_reconcile)
+    monkeypatch.setattr(cb, "_call_l6e_record_usage", fake_reconcile)
 
     class FakeRequest:
         async def json(self):
@@ -182,6 +182,7 @@ async def test_success_callback_records_orphan_when_no_correlation(tmp_path, mon
     response = await cb.litellm_success_callback(FakeRequest())
     body = json.loads(response.body.decode())
     assert body["status"] == "no_active_call"
-    assert captured["reason"] == "no_correlation_match"
+    assert body["diagnostic"] == "missing_call_id_metadata"
+    assert captured["reason"] == "missing_call_id_metadata"
     assert captured["request_id"] == "req_2"
     assert captured["trace_id"] == "trace_2"

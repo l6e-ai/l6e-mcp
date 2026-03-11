@@ -18,7 +18,7 @@ dev = [
     "ruff>=0.4",
 ]
 # Advanced self-hosted exact accounting path: run a LiteLLM proxy that
-# intercepts API calls and posts actual token counts back to l6e_checkpoint in
+# intercepts API calls and posts actual token counts back to l6e_authorize_call in
 # real time. Install with: pip install "l6e-mcp[proxy]"
 proxy = [
     "litellm[proxy]>=1.0.0",

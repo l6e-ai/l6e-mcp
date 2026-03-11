@@ -19,9 +19,11 @@ from l6e.router import LocalRouter
 from l6e.store import InMemoryRunStore
 
 from l6e_mcp.contracts.correlation_envelope import CorrelationEnvelope
+from l6e_mcp.contracts.exactness import ExactnessState
+from l6e_mcp.contracts.mode_coverage import ModeCoverage
 from l6e_mcp.contracts.usage_report import UsageReport
 from l6e_mcp.core.authorization import authorize_call
-from l6e_mcp.core.exactness import call_exactness_state, run_exactness_state
+from l6e_mcp.core.exactness import run_exactness_state
 from l6e_mcp.core.reconciliation import reconcile_usage_report
 from l6e_mcp.session_store import LocalSessionStore, SessionState, session_run_summary
 
@@ -29,11 +31,11 @@ mcp = FastMCP(
     name="l6e-budget",
     instructions=(
         "l6e enforces session budgets for AI coding assistants. "
-        "Call l6e_session_start at the beginning of a task to set a USD budget. "
-        "Call l6e_checkpoint before each expensive tool call to get a routing decision. "
-        "Call l6e_spend at any time to check how much has been spent. "
-        "Call l6e_session_end when the task is complete to flush the run log. "
-        "IMPORTANT: always call l6e_session_end — it is the only way to write the run log."
+        "Call l6e_run_start at the beginning of a task to set a USD budget. "
+        "Call l6e_authorize_call before each expensive tool call to get a routing decision. "
+        "Call l6e_run_status at any time to check how much has been spent. "
+        "Call l6e_run_end when the task is complete to flush the run log. "
+        "IMPORTANT: always call l6e_run_end — it is the only way to write the run log."
     ),
 )
 
@@ -98,8 +100,47 @@ def _spend_snapshot(session: SessionState) -> dict:
     budget = session.policy.budget
     remaining = budget - spent
     pct_used = (spent / budget * 100.0) if budget > 0 else 0.0
-    call_exactness = [call_exactness_state(call.status, session.accounting_mode) for call in calls]
+    call_exactness = [ExactnessState(call.exactness_state) for call in calls]
     run_exactness = run_exactness_state(call_exactness)
+    pending_exact_calls = sum(
+        1 for state in call_exactness if state == ExactnessState.EXACT_PENDING
+    )
+    unavailable_exact_calls = sum(
+        1 for state in call_exactness if state == ExactnessState.EXACT_UNAVAILABLE
+    )
+    last_reconciled = max(
+        (call.reconciled_at for call in calls if call.reconciled_at),
+        default=None,
+    )
+    exactness_breakdown = {
+        ExactnessState.ESTIMATE_ONLY.value: sum(
+            1 for state in call_exactness if state == ExactnessState.ESTIMATE_ONLY
+        ),
+        ExactnessState.EXACT_PENDING.value: pending_exact_calls,
+        ExactnessState.EXACT_RECORDED.value: sum(
+            1 for state in call_exactness if state == ExactnessState.EXACT_RECORDED
+        ),
+        ExactnessState.EXACT_UNAVAILABLE.value: unavailable_exact_calls,
+    }
+    mode_coverage = ModeCoverage(
+        ask_mode_exact_capable=session.ask_mode_exact_capable,
+        plan_mode_exact_capable=session.plan_mode_exact_capable,
+        agent_mode_exact_capable=session.agent_mode_exact_capable,
+    )
+    coverage_gaps: list[str] = []
+    if not mode_coverage.ask_mode_exact_capable:
+        coverage_gaps.append("ask")
+    if not mode_coverage.plan_mode_exact_capable:
+        coverage_gaps.append("plan")
+    if not mode_coverage.agent_mode_exact_capable:
+        coverage_gaps.append("agent")
+    exactness_reason = "fully_exact_coverage"
+    if run_exactness.value == "partial_exact":
+        exactness_reason = "mixed_exact_and_non_exact_calls"
+    elif run_exactness.value == "exactness_degraded":
+        exactness_reason = "non_exact_capable_modes_or_unmatched_usage"
+    elif run_exactness.value == "all_estimate_only":
+        exactness_reason = "estimate_only_or_no_reconciliation"
     return {
         "spent_usd": round(spent, 6),
         "remaining_usd": round(remaining, 6),
@@ -112,7 +153,14 @@ def _spend_snapshot(session: SessionState) -> dict:
         "subagent_spend_usd": round(summary.subagent_spend_usd, 6),
         "subagents": [dataclasses.asdict(subagent) for subagent in summary.subagents],
         "exactness_state": run_exactness.value,
+        "exactness_reason": exactness_reason,
+        "exactness_breakdown": exactness_breakdown,
+        "pending_exact_calls": pending_exact_calls,
+        "unavailable_exact_calls": unavailable_exact_calls,
+        "last_reconciled_at": round(last_reconciled, 6) if last_reconciled is not None else None,
         "exact_calls": sum(1 for state in call_exactness if state.value == "exact_recorded"),
+        "mode_coverage": mode_coverage.as_dict(),
+        "mode_coverage_gaps": coverage_gaps,
     }
 
 
@@ -124,7 +172,7 @@ def _write_active_call(session_id: str, call_id: str) -> None:
     )
 
 
-def _proxy_correlation(
+def _correlation_envelope(
     session_id: str,
     call_id: str,
     tool_name: str,
@@ -191,7 +239,7 @@ def _clear_active_call_file(session_id: str) -> None:
 
 
 @mcp.tool
-def l6e_session_start(
+def l6e_run_start(
     budget_usd: Annotated[float, "Hard budget ceiling in USD for this session"],
     model: Annotated[str, "Billing model ID for this session"],
     client: Annotated[
@@ -200,9 +248,12 @@ def l6e_session_start(
     ] = "unknown",
     proxy_mode: Annotated[
         bool,
-        "When True, writes the session_id to ~/.l6e/active_session so the LiteLLM "
-        "callback server can reconcile actual token counts back to this session. "
-        "Requires the l6e LiteLLM callback server to be running. Default: False.",
+        "When True, enables self-hosted relay reconciliation paths. "
+        "Legacy active-file fallback is controlled by advanced_fallback. Default: False.",
+    ] = False,
+    advanced_fallback: Annotated[
+        bool,
+        "Enable legacy active_session/active_call fallback handshake. Default: False.",
     ] = False,
     accounting_mode: Annotated[
         str | None,
@@ -211,6 +262,18 @@ def l6e_session_start(
     usage_channel: Annotated[
         str | None,
         "Optional usage channel: none, hosted_edge, self_hosted_relay, or manual_import.",
+    ] = None,
+    ask_mode_exact_capable: Annotated[
+        bool | None,
+        "Optional override for Ask-mode exactness capability.",
+    ] = None,
+    plan_mode_exact_capable: Annotated[
+        bool | None,
+        "Optional override for Plan-mode exactness capability.",
+    ] = None,
+    agent_mode_exact_capable: Annotated[
+        bool | None,
+        "Optional override for Agent-mode exactness capability.",
     ] = None,
 ) -> dict:
     """Start a new budget-enforced session. Returns session_id to pass to other tools."""
@@ -227,9 +290,13 @@ def l6e_session_start(
         proxy_mode=proxy_mode,
         accounting_mode=accounting_mode,
         usage_channel=usage_channel,
+        advanced_fallback_enabled=advanced_fallback,
+        ask_mode_exact_capable=ask_mode_exact_capable,
+        plan_mode_exact_capable=plan_mode_exact_capable,
+        agent_mode_exact_capable=agent_mode_exact_capable,
     )
 
-    if proxy_mode:
+    if proxy_mode and advanced_fallback:
         _ACTIVE_SESSION_FILE.parent.mkdir(parents=True, exist_ok=True)
         _ACTIVE_SESSION_FILE.write_text(session_id, encoding="utf-8")
 
@@ -239,8 +306,10 @@ def l6e_session_start(
         "model": model,
         "accounting_mode": accounting_mode or ("exact_optional" if proxy_mode else "estimate_only"),
         "usage_channel": usage_channel or ("self_hosted_relay" if proxy_mode else "none"),
+        "advanced_fallback_enabled": advanced_fallback,
+        "fallback_correlation_capability": "active_file" if advanced_fallback else "metadata_only",
     }
-    if proxy_mode:
+    if proxy_mode and advanced_fallback:
         result["proxy_mode"] = True
         result["active_session_file"] = str(_ACTIVE_SESSION_FILE)
         result["active_call_file"] = str(_ACTIVE_CALL_FILE)
@@ -248,8 +317,8 @@ def l6e_session_start(
 
 
 @mcp.tool
-def l6e_checkpoint(
-    session_id: Annotated[str, "Session ID from l6e_session_start"],
+def l6e_authorize_call(
+    session_id: Annotated[str, "Session ID from l6e_run_start"],
     tool_name: Annotated[str, "Name of the tool or stage about to run"],
     estimated_tokens: Annotated[int, "Estimated prompt token count for this call"] = 500,
     actor_type: Annotated[
@@ -267,6 +336,10 @@ def l6e_checkpoint(
     parent_call_id: Annotated[
         str | None,
         "Optional parent call that launched this child agent or delegated this work.",
+    ] = None,
+    call_mode: Annotated[
+        str | None,
+        "Optional host mode for this call (ask, plan, or agent).",
     ] = None,
     actual_prompt_tokens: Annotated[
         int | None,
@@ -292,6 +365,7 @@ def l6e_checkpoint(
         actor_id=actor_id,
         actor_name=actor_name,
         parent_call_id=parent_call_id,
+        call_mode=call_mode,
         actual_prompt_tokens=actual_prompt_tokens,
         actual_completion_tokens=actual_completion_tokens,
     )
@@ -299,7 +373,12 @@ def l6e_checkpoint(
     use_actual = (
         actual_prompt_tokens is not None and actual_completion_tokens is not None
     )
-    if call_id is not None and session.proxy_mode and not use_actual:
+    if (
+        call_id is not None
+        and session.proxy_mode
+        and session.advanced_fallback_enabled
+        and not use_actual
+    ):
         _write_active_call(session_id, call_id)
 
     snapshot = _spend_snapshot(session)
@@ -313,7 +392,7 @@ def l6e_checkpoint(
     }
     if call_id is not None:
         result["call_id"] = call_id
-        result["correlation"] = _proxy_correlation(
+        result["correlation"] = _correlation_envelope(
             session_id,
             call_id,
             tool_name,
@@ -322,16 +401,14 @@ def l6e_checkpoint(
             actor_name=actor_name,
             parent_call_id=parent_call_id,
         )
-        # Backward-compatible alias retained for existing hosts.
-        result["proxy_correlation"] = result["correlation"]
     if decision.action == "reroute" and decision.target_model is not None:
         result["target_model"] = decision.target_model
     return result
 
 
 @mcp.tool
-def l6e_reconcile_call(
-    call_id: Annotated[str, "Call ID from a previous l6e_checkpoint result"],
+def l6e_record_usage(
+    call_id: Annotated[str, "Call ID from a previous l6e_authorize_call result"],
     actual_prompt_tokens: Annotated[int, "Actual prompt tokens for the completed call"],
     actual_completion_tokens: Annotated[int, "Actual completion tokens for the completed call"],
     model_used: Annotated[
@@ -371,7 +448,7 @@ def l6e_reconcile_call(
         raise ToolError(f"Unknown call '{call_id}'.")
     session = store.get_session(existing.session_id)
     if session is None:
-        raise ToolError(f"Unknown session '{existing.session_id}'. Call l6e_session_start first.")
+        raise ToolError(f"Unknown session '{existing.session_id}'. Call l6e_run_start first.")
 
     report = UsageReport(
         call_id=call_id,
@@ -407,8 +484,8 @@ def l6e_reconcile_call(
 
 
 @mcp.tool
-def l6e_spend(
-    session_id: Annotated[str, "Session ID from l6e_session_start"],
+def l6e_run_status(
+    session_id: Annotated[str, "Session ID from l6e_run_start"],
 ) -> dict:
     """Get a read-only spend snapshot. Does not record a call or advance the budget."""
     session = _require_session(session_id)
@@ -416,8 +493,8 @@ def l6e_spend(
 
 
 @mcp.tool
-def l6e_session_end(
-    session_id: Annotated[str, "Session ID from l6e_session_start"],
+def l6e_run_end(
+    session_id: Annotated[str, "Session ID from l6e_run_start"],
 ) -> dict:
     """End the session and flush the run log to .l6e/runs.jsonl (or L6E_LOG_PATH)."""
     store = _get_session_store()
@@ -438,8 +515,9 @@ def l6e_session_end(
         store.finalize_session(session_id)
     except KeyError as exc:
         raise ToolError(exc.args[0]) from exc
-    _clear_active_session_file(session_id)
-    _clear_active_call_file(session_id)
+    if session.advanced_fallback_enabled:
+        _clear_active_session_file(session_id)
+        _clear_active_call_file(session_id)
     return {
         "session_id": session_id,
         "total_cost_usd": round(summary.total_cost, 6),

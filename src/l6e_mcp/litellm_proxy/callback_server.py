@@ -1,7 +1,7 @@
 """l6e LiteLLM callback server.
 
 Receives LiteLLM proxy success callbacks and forwards actual token counts to
-l6e_reconcile_call via the MCP tool. Run alongside the LiteLLM proxy to get
+l6e_record_usage via the MCP tool. Run alongside the LiteLLM proxy to get
 accurate per-call cost tracking instead of fixed-token estimates.
 
 Usage:
@@ -27,6 +27,7 @@ from l6e_mcp.integrations.litellm.webhook_ingress import (
     extract_usage,
     normalize_payload,
 )
+from l6e_mcp.session_store import LocalSessionStore
 from l6e_mcp.transport.http.unmatched_usage import persist_unmatched_usage
 
 logger = logging.getLogger(__name__)
@@ -35,7 +36,7 @@ app = FastAPI(
     title="l6e LiteLLM callback server",
     description=(
         "Receives LiteLLM success callbacks and forwards actual token counts "
-        "to l6e_reconcile_call so the MCP budget session reflects real API spend."
+        "to l6e_record_usage so the MCP budget session reflects real API spend."
     ),
     version="0.1.0",
 )
@@ -122,6 +123,10 @@ def _extract_call_id_from_request_tags(payload: dict[str, Any]) -> str | None:
     return _extract_request_tag_value(payload, "l6e_call_id")
 
 
+def _extract_session_id_from_request_tags(payload: dict[str, Any]) -> str | None:
+    return _extract_request_tag_value(payload, "l6e_session_id")
+
+
 def _extract_call_correlation(payload: dict[str, Any]) -> tuple[str | None, str | None]:
     """Extract `(call_id, source)` from callback payload metadata when present."""
     metadata = payload.get("metadata")
@@ -143,6 +148,35 @@ def _extract_call_correlation(payload: dict[str, Any]) -> tuple[str | None, str 
     if tagged_call_id:
         return tagged_call_id, "request_tags"
     return None, None
+
+
+def _extract_session_correlation(payload: dict[str, Any]) -> tuple[str | None, str | None]:
+    metadata = payload.get("metadata")
+    if isinstance(metadata, dict):
+        spend_logs = metadata.get("spend_logs_metadata")
+        if isinstance(spend_logs, dict):
+            session_id = spend_logs.get("l6e_session_id")
+            if session_id:
+                return str(session_id), "spend_logs_metadata"
+        requester = metadata.get("requester_metadata")
+        if isinstance(requester, dict):
+            session_id = requester.get("l6e_session_id")
+            if session_id:
+                return str(session_id), "requester_metadata"
+        session_id = metadata.get("l6e_session_id")
+        if session_id:
+            return str(session_id), "metadata"
+    tagged_session_id = _extract_session_id_from_request_tags(payload)
+    if tagged_session_id:
+        return tagged_session_id, "request_tags"
+    return None, None
+
+
+def _is_advanced_fallback_enabled(session_id: str | None) -> bool:
+    if session_id is None:
+        return False
+    session = LocalSessionStore().get_session(session_id)
+    return bool(session is not None and session.advanced_fallback_enabled)
 
 
 def _extract_actor_correlation(payload: dict[str, Any]) -> dict[str, str | None]:
@@ -223,7 +257,7 @@ def _mcp_transport_url() -> str:
     return f"{MCP_HTTP_URL.rstrip('/')}/mcp"
 
 
-async def _call_l6e_reconcile_call(
+async def _call_l6e_record_usage(
     call_id: str,
     prompt_tokens: int,
     completion_tokens: int,
@@ -233,7 +267,7 @@ async def _call_l6e_reconcile_call(
     correlation_key: str | None = None,
     correlation_source: str | None = None,
 ) -> dict[str, Any]:
-    """Send actual token counts to `l6e_reconcile_call` over FastMCP HTTP transport."""
+    """Send actual token counts to `l6e_record_usage` over FastMCP HTTP transport."""
     arguments: dict[str, Any] = {
         "call_id": call_id,
         "actual_prompt_tokens": prompt_tokens,
@@ -250,7 +284,7 @@ async def _call_l6e_reconcile_call(
         arguments["correlation_source"] = correlation_source
     async with Client(_mcp_transport_url(), timeout=5.0) as client:
         result = await client.call_tool(
-            "l6e_reconcile_call",
+            "l6e_record_usage",
             arguments,
             raise_on_error=False,
         )
@@ -293,16 +327,6 @@ async def litellm_success_callback(request: Request) -> JSONResponse:
         summary["metadata_keys"],
     )
 
-    session_id = _read_active_session()
-    if session_id is None:
-        # No active session — proxy is running but l6e_session_start with
-        # proxy_mode=True hasn't been called yet, or session already ended.
-        logger.warning(
-            "No active l6e session; skipping callback for request_id=%s",
-            summary["request_id"],
-        )
-        return JSONResponse({"status": "no_active_session"})
-
     usage = _extract_usage(payload)
     if usage is None:
         logger.warning(
@@ -316,12 +340,20 @@ async def litellm_success_callback(request: Request) -> JSONResponse:
     request_id = _extract_request_id(payload)
     trace_id = _extract_trace_id(payload)
     correlated_call_id, correlation_source = _extract_call_correlation(payload)
-    call_id = correlated_call_id or _read_active_call()
+    correlated_session_id, _ = _extract_session_correlation(payload)
+    call_id = correlated_call_id
+    effective_source = correlation_source
+    fallback_session_id = _read_active_session()
+    if call_id is None and _is_advanced_fallback_enabled(fallback_session_id):
+        call_id = _read_active_call()
+        if call_id is not None:
+            effective_source = "active_call_fallback_advanced"
+
     if call_id is None:
         persist_unmatched_usage(
-            session_id=session_id,
-            usage_source="none",
-            reason="no_correlation_match",
+            session_id=correlated_session_id or fallback_session_id,
+            usage_source=correlation_source or "none",
+            reason="missing_call_id_metadata",
             payload=payload,
             call_id=None,
             request_id=request_id,
@@ -331,11 +363,17 @@ async def litellm_success_callback(request: Request) -> JSONResponse:
             "No correlated l6e call; recorded orphan callback for request_id=%s",
             summary["request_id"],
         )
-        return JSONResponse({"status": "no_active_call", "session_id": session_id})
-    effective_source = correlation_source or "active_call_fallback"
+        return JSONResponse(
+            {
+                "status": "no_active_call",
+                "session_id": correlated_session_id or fallback_session_id,
+                "diagnostic": "missing_call_id_metadata",
+            }
+        )
+    session_id = correlated_session_id or fallback_session_id
 
     try:
-        result = await _call_l6e_reconcile_call(
+        result = await _call_l6e_record_usage(
             call_id=call_id,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
@@ -355,7 +393,7 @@ async def litellm_success_callback(request: Request) -> JSONResponse:
             request_id=request_id,
             trace_id=trace_id,
         )
-        logger.error("Failed to call l6e_reconcile_call for call_id=%s: %s", call_id, exc)
+        logger.error("Failed to call l6e_record_usage for call_id=%s: %s", call_id, exc)
         return JSONResponse({"status": "checkpoint_error", "detail": str(exc)}, status_code=502)
 
     logger.info(
@@ -380,10 +418,12 @@ async def litellm_success_callback(request: Request) -> JSONResponse:
 @app.get("/health")
 async def health() -> JSONResponse:
     """Health check — also reports the currently active session."""
+    active_session = _read_active_session()
     return JSONResponse({
         "status": "ok",
-        "active_session": _read_active_session(),
+        "active_session": active_session,
         "active_call": _read_active_call(),
+        "advanced_fallback_enabled": _is_advanced_fallback_enabled(active_session),
         "active_session_file": str(ACTIVE_SESSION_FILE),
         "active_call_file": str(ACTIVE_CALL_FILE),
         "mcp_http_url": MCP_HTTP_URL,

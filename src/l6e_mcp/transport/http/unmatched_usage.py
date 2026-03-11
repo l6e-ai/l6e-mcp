@@ -16,11 +16,12 @@ def persist_unmatched_usage(
     trace_id: str | None,
 ) -> None:
     """Store unmatched usage and reconciliation diagnostics."""
+    actionable_reason = reason or "missing_call_id_metadata"
     record_unmatched_usage(
         store=LocalSessionStore(),
         session_id=session_id,
         usage_source=usage_source,
-        reason=reason,
+        reason=actionable_reason,
         payload=payload,
         call_id=call_id,
         request_id=request_id,

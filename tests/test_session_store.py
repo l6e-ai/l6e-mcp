@@ -209,3 +209,28 @@ def test_session_store_records_reconciliation_attempt_and_unmatched_usage(tmp_pa
         unmatched = conn.execute("SELECT COUNT(*) FROM unmatched_usage_events").fetchone()[0]
     assert attempts == 1
     assert unmatched == 1
+
+
+def test_session_store_normalizes_unknown_exactness_state(tmp_path):
+    store = LocalSessionStore(tmp_path / "sessions.db")
+    policy = PipelinePolicy(budget=2.0, budget_mode=BudgetMode.WARN)
+    session = store.create_session(
+        session_id="session_cursor_2026-03-11_badstate",
+        model="gpt-4o",
+        policy=policy,
+        source="mcp",
+        log_path=str(tmp_path / "runs.jsonl"),
+        proxy_mode=True,
+    )
+    call = store.create_call(
+        session_id=session.session_id,
+        tool_name="read_files",
+        model_requested="gpt-4o",
+        model_used="gpt-4o",
+        estimated_prompt_tokens=500,
+        estimated_completion_tokens=0,
+        estimated_cost_usd=0.1,
+        rerouted=False,
+        exactness_state="legacy_state_unknown",
+    )
+    assert call.exactness_state == "exact_pending"

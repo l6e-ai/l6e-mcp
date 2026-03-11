@@ -31,6 +31,7 @@ def authorize_call(
     actor_id: str | None,
     actor_name: str | None,
     parent_call_id: str | None,
+    call_mode: str | None,
     actual_prompt_tokens: int | None,
     actual_completion_tokens: int | None,
 ) -> AuthorizationDecision:
@@ -92,6 +93,7 @@ def authorize_call(
         actor_id=actor_id,
         actor_name=actor_name,
         parent_call_id=parent_call_id,
+        call_mode=call_mode,
     )
     return AuthorizationDecision(
         action=response_action,
