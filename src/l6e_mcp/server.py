@@ -12,7 +12,6 @@ from fastmcp.exceptions import ToolError
 
 from l6e._types import BudgetMode, CallRecord, PipelinePolicy
 from l6e.pipeline import pipeline
-from l6e.router import LocalRouter
 
 mcp = FastMCP(
     name="l6e-budget",
@@ -26,7 +25,7 @@ mcp = FastMCP(
     ),
 )
 
-# session_id → (PipelineContext, model: str, local_model: str | None)
+# session_id → (PipelineContext, model: str)
 _sessions: dict[str, tuple] = {}
 
 
@@ -53,7 +52,7 @@ def _get_session(session_id: str) -> tuple:
             f"Unknown session '{session_id}'. "
             "Call l6e_session_start first."
         )
-    return entry  # (ctx, model, local_model)
+    return entry  # (ctx, model)
 
 
 @mcp.tool
@@ -65,14 +64,14 @@ def l6e_session_start(
         "MCP client name for session_id labelling — e.g. cursor, claude-code, windsurf",
     ] = "unknown",
 ) -> dict:
-    """Start a new budget-enforced session. Returns session_id to pass to other tools.
-
-    Check the 'local_model' field in the response — if null, no Ollama model is
-    available and budget reroutes will fall back to halt.
-    """
-    local_model = LocalRouter().best_local_model()
+    """Start a new budget-enforced session. Returns session_id to pass to other tools."""
     session_id = _make_session_id(client)
-    policy = PipelinePolicy(budget=budget_usd, budget_mode=BudgetMode.REROUTE)
+    # BudgetMode.WARN: the gate emits action="allow" with reason="warn:budget_pressure"
+    # at the reroute threshold. l6e_checkpoint translates that into action="reroute" so
+    # the agent can prompt the user to select a cheaper model in their IDE settings.
+    # Full programmatic rerouting (automatic model switching) is not possible over MCP;
+    # it is a planned future feature pending MCP spec support.
+    policy = PipelinePolicy(budget=budget_usd, budget_mode=BudgetMode.WARN)
     log_path = _get_log_path()
     ctx = pipeline(
         run_id=session_id,
@@ -80,13 +79,11 @@ def l6e_session_start(
         log_path=log_path,
         source="mcp",
     ).__enter__()
-    _sessions[session_id] = (ctx, model, local_model)
+    _sessions[session_id] = (ctx, model)
     return {
         "session_id": session_id,
         "budget_usd": budget_usd,
         "model": model,
-        "local_model": local_model,
-        "reroute_capable": local_model is not None,
     }
 
 
@@ -95,45 +92,72 @@ def l6e_checkpoint(
     session_id: Annotated[str, "Session ID from l6e_session_start"],
     tool_name: Annotated[str, "Name of the tool or stage about to run"],
     estimated_tokens: Annotated[int, "Estimated prompt token count for this call"] = 500,
+    actual_prompt_tokens: Annotated[
+        int | None,
+        "Actual prompt tokens from a completed LLM call. "
+        "When provided together with actual_completion_tokens, overrides estimated_tokens "
+        "for cost accounting — use this for post-call reconciliation or sub-agent reporting.",
+    ] = None,
+    actual_completion_tokens: Annotated[
+        int | None,
+        "Actual completion tokens from a completed LLM call. "
+        "Must be provided alongside actual_prompt_tokens to take effect.",
+    ] = None,
 ) -> dict:
     """Check whether to allow, reroute, or halt before an expensive tool call.
 
     Records the estimated spend so budget tracking stays accurate across calls.
-    On 'reroute', use the returned 'target_model' instead of the default model.
+    On 'reroute', tell the user to select a cheaper model in their IDE settings.
     On 'halt', do not proceed — the budget is exhausted.
+
+    Pass actual_prompt_tokens + actual_completion_tokens when you have real token
+    counts (e.g. after a sub-agent finishes, or from an LLM response object).
+    This produces accurate cost records instead of fixed estimates.
     """
-    ctx, model, _ = _get_session(session_id)
+    ctx, model = _get_session(session_id)
     decision = ctx.advise(model=model, prompts=[], stage=tool_name)
 
-    # Book the estimated spend so the gate fires correctly on subsequent checkpoints.
-    # Build CallRecord directly — avoids response-parsing indirection in ctx.record().
+    # Book the spend so the gate fires correctly on subsequent checkpoints.
+    # Prefer actual token counts when both are supplied; fall back to the estimate.
     if decision.action != "halt":
-        cost = ctx._estimator.estimate(model, estimated_tokens, 0)
+        use_actual = (
+            actual_prompt_tokens is not None and actual_completion_tokens is not None
+        )
+        prompt_tok = actual_prompt_tokens if use_actual else estimated_tokens
+        completion_tok = actual_completion_tokens if use_actual else 0
+        cost = ctx._estimator.estimate(model, prompt_tok, completion_tok)
         record = CallRecord(
             call_index=ctx._call_index,
             model_requested=model,
-            model_used=decision.target_model,
-            prompt_tokens=estimated_tokens,
-            completion_tokens=0,
+            model_used=model,
+            prompt_tokens=prompt_tok,
+            completion_tokens=completion_tok,
             cost_usd=cost,
-            rerouted=(decision.action == "reroute"),
+            rerouted=False,
             elapsed_ms=0.0,
             stage=tool_name,
         )
         ctx._store.record_call(record)
         ctx._call_index += 1
 
+    # Translate the gate's warn signal into an advisory "reroute" action.
+    # BudgetMode.WARN causes the gate to return action="allow" with
+    # reason="warn:budget_pressure" once the reroute_threshold is crossed.
+    # We surface this as action="reroute" so agent rules can prompt the user
+    # to select a cheaper model. No automatic model switching occurs — that
+    # is not possible over MCP.
+    action = decision.action
+    if action == "allow" and decision.reason == "warn:budget_pressure":
+        action = "reroute"
+
     status = ctx.budget_status()
-    result: dict = {
-        "action": decision.action,
+    return {
+        "action": action,
         "spend_so_far_usd": round(status.spent_usd, 6),
         "remaining_usd": round(status.remaining_usd, 6),
         "budget_pressure": status.budget_pressure,
         "reason": decision.reason,
     }
-    if decision.action == "reroute":
-        result["target_model"] = decision.target_model
-    return result
 
 
 @mcp.tool
@@ -141,7 +165,7 @@ def l6e_spend(
     session_id: Annotated[str, "Session ID from l6e_session_start"],
 ) -> dict:
     """Get a read-only spend snapshot. Does not record a call or advance the budget."""
-    ctx, _, _ = _get_session(session_id)
+    ctx, _ = _get_session(session_id)
     status = ctx.budget_status()
     return {
         "spent_usd": round(status.spent_usd, 6),
@@ -169,7 +193,7 @@ def l6e_session_end(
             f"Unknown session '{session_id}'. "
             "Already ended or never started."
         )
-    ctx, _, _ = entry
+    ctx, _ = entry
     summary = ctx.run_summary()         # snapshot before __exit__
     ctx.__exit__(None, None, None)      # writes identical snapshot to log
     return {

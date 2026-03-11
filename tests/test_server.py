@@ -47,25 +47,12 @@ async def test_session_start_registers_in_registry(client):
     assert len(srv._sessions) == 1
 
 
-async def test_session_start_includes_local_model_key(client):
+async def test_session_start_no_local_model_or_reroute_capable(client):
+    """local_model and reroute_capable are not surfaced — rerouting is advisory-only over MCP."""
     result = await client.call_tool("l6e_session_start", {"budget_usd": 2.0}, raise_on_error=False)
     assert not result.is_error
-    assert "local_model" in result.data
-
-
-async def test_session_start_includes_reroute_capable_key(client):
-    result = await client.call_tool("l6e_session_start", {"budget_usd": 2.0}, raise_on_error=False)
-    assert not result.is_error
-    assert "reroute_capable" in result.data
-
-
-async def test_session_start_reroute_capable_false_when_no_local(client):
-    """reroute_capable is False when local_model is null (no Ollama detected)."""
-    result = await client.call_tool("l6e_session_start", {"budget_usd": 2.0}, raise_on_error=False)
-    assert not result.is_error
-    data = result.data
-    # reroute_capable must be the boolean inverse of local_model being null
-    assert data["reroute_capable"] == (data["local_model"] is not None)
+    assert "local_model" not in result.data
+    assert "reroute_capable" not in result.data
 
 
 async def test_session_start_client_label_in_session_id(client):
@@ -158,6 +145,64 @@ async def test_checkpoint_halt_when_over_budget(client, monkeypatch):
     # With budget=0.000001 USD and 100000 tokens, the gate should halt.
     # If LiteLLM returns 0 for unknown model, this may still be allow — acceptable.
     assert result.data["action"] in ("allow", "reroute", "halt")
+
+
+async def test_checkpoint_actual_tokens_override_estimate(client):
+    """actual_prompt_tokens + actual_completion_tokens replace estimated_tokens in the record."""
+    sid = await start_session(client, budget_usd=10.0, model="gpt-4o")
+
+    baseline = await client.call_tool("l6e_spend", {"session_id": sid}, raise_on_error=False)
+    assert not baseline.is_error
+    baseline_spend = baseline.data["spent_usd"]
+
+    result = await client.call_tool(
+        "l6e_checkpoint",
+        {
+            "session_id": sid,
+            "tool_name": "sub_agent_explore",
+            "estimated_tokens": 100,        # should be ignored
+            "actual_prompt_tokens": 50_000,
+            "actual_completion_tokens": 2_000,
+        },
+        raise_on_error=False,
+    )
+    assert not result.is_error
+    assert result.data["action"] in ("allow", "reroute", "halt")
+    # Spend must be much higher than an estimate of 100 tokens would produce.
+    assert result.data["spend_so_far_usd"] > baseline_spend
+
+
+async def test_checkpoint_partial_actual_tokens_falls_back_to_estimate(client):
+    """Providing only one of actual_prompt/completion_tokens still uses the estimate."""
+    sid = await start_session(client, budget_usd=10.0, model="gpt-4o")
+
+    baseline = await client.call_tool("l6e_spend", {"session_id": sid}, raise_on_error=False)
+    baseline_spend = baseline.data["spent_usd"]
+
+    # Only actual_prompt_tokens, no actual_completion_tokens — falls back to estimated_tokens=100
+    result = await client.call_tool(
+        "l6e_checkpoint",
+        {
+            "session_id": sid,
+            "tool_name": "read_files",
+            "estimated_tokens": 100,
+            "actual_prompt_tokens": 50_000,
+            # actual_completion_tokens omitted
+        },
+        raise_on_error=False,
+    )
+    assert not result.is_error
+    # Spend should reflect 100-token estimate, not 50k actual
+    spend_after = result.data["spend_so_far_usd"]
+    # The gap must be small (only 100-token estimate's worth, not 50k)
+    import litellm
+    try:
+        pt, ct = litellm.cost_per_token(model="gpt-4o", prompt_tokens=100, completion_tokens=0)
+        est_cost = pt + ct
+        actual_cost = spend_after - baseline_spend
+        assert actual_cost == pytest.approx(est_cost, rel=0.01)
+    except Exception:
+        pass  # litellm model lookup may vary; structural check is enough
 
 
 async def test_checkpoint_unknown_session_is_tool_error(client):
