@@ -314,7 +314,7 @@ def l6e_run_start(
         "Unknown pricing policy mode: warn_only, reroute_required, or halt_on_unknown_pricing.",
     ] = "warn_only",
 ) -> dict:
-    """Start a new budget-enforced session. Call once at the start of every task before any other work. Returns session_id in the response — store it and pass it to all subsequent l6e calls. Do NOT pass session_id or task_description as inputs; they are not valid parameters for this tool."""
+    """Start a new budget-enforced session. Call once at the start of every task before any other work. Returns session_id in the response — store it and pass it to all subsequent l6e calls. Do NOT pass session_id or task_description as inputs; they are not valid parameters for this tool."""  # noqa: E501 — MCP tool docstring surfaces verbatim to agents; truncating it degrades guidance quality
     model = model.strip() or "unknown"
     try:
         pricing_mode = UnknownModelPricingMode(unknown_model_pricing_mode)
@@ -369,7 +369,7 @@ def l6e_run_start(
 @mcp.tool
 def l6e_authorize_call(
     session_id: Annotated[str, "Session ID from l6e_run_start"],
-    tool_name: Annotated[str, "Name of the tool or stage about to run — pass the stage label here (e.g. 'planning', 'implement'). This is NOT a 'stage' parameter; the field is called tool_name."],
+    tool_name: Annotated[str, "Name of the tool or stage about to run — pass the stage label here (e.g. 'planning', 'implement'). This is NOT a 'stage' parameter; the field is called tool_name."],  # noqa: E501 — Annotated string is the MCP parameter description shown verbatim to agents; must be unambiguous
     estimated_tokens: Annotated[int, "Estimated prompt token count for this call"] = 500,
     estimated_prompt_tokens: Annotated[
         int | None,
@@ -411,7 +411,7 @@ def l6e_authorize_call(
         "Must be provided alongside actual_prompt_tokens to take effect.",
     ] = None,
 ) -> dict:
-    """Blocking gate: call before launching any sub-agent (actor_type='subagent') and at every stage boundary (planning, search, implement, test, debug). Pass the stage label in tool_name — there is no 'stage' parameter. Returns allow, reroute, or halt — proceed only on allow."""
+    """Blocking gate: call before launching any sub-agent (actor_type='subagent') and at every stage boundary (planning, search, implement, test, debug). Pass the stage label in tool_name — there is no 'stage' parameter. Returns allow, reroute, or halt — proceed only on allow."""  # noqa: E501 — MCP tool docstring surfaces verbatim to agents; truncating it degrades guidance quality
     session = _require_session(session_id)
     store = _get_session_store()
     decision = authorize_call(
@@ -525,7 +525,7 @@ def l6e_record_usage(
         "Optional idempotency key from usage ingestion.",
     ] = None,
 ) -> dict:
-    """Reconcile a pending call with actual token usage after the call completes. Idempotent for the same values on the same call_id."""
+    """Reconcile a pending call with actual token usage after the call completes. Idempotent for the same values on the same call_id."""  # noqa: E501 — MCP tool docstring surfaces verbatim to agents; truncating it degrades guidance quality
     store = _get_session_store()
     existing = store.get_call(call_id)
     if existing is None:
@@ -571,7 +571,7 @@ def l6e_record_usage(
 def l6e_run_status(
     session_id: Annotated[str, "Session ID from l6e_run_start"],
 ) -> dict:
-    """Read-only spend snapshot. No call recorded, no gate action. Use within a stage to monitor budget pressure without burning a checkpoint."""
+    """Read-only spend snapshot. No call recorded, no gate action. Use within a stage to monitor budget pressure without burning a checkpoint."""  # noqa: E501 — MCP tool docstring surfaces verbatim to agents; truncating it degrades guidance quality
     store = _get_session_store()
     store.increment_status_calls(session_id)
     session = _require_session(session_id)
@@ -582,7 +582,7 @@ def l6e_run_status(
 def l6e_run_end(
     session_id: Annotated[str, "Session ID from l6e_run_start"],
 ) -> dict:
-    """End the session and flush the run log. Call at task end, including on failure or cancellation — this is the only way to persist the run log."""
+    """End the session and flush the run log. Call at task end, including on failure or cancellation — this is the only way to persist the run log."""  # noqa: E501 — MCP tool docstring surfaces verbatim to agents; truncating it degrades guidance quality
     store = _get_session_store()
     session = store.get_session(session_id)
     if session is None or session.state == "finalized":
