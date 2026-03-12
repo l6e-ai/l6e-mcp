@@ -148,7 +148,11 @@ def generate_calibration(
 
     usage_total = _load_usage_total(usage_csv_path)
     runs_total = sum(s.estimated_cost for s in samples)
-    global_ratio = (usage_total / runs_total) if usage_total is not None and runs_total > 0 else None
+    global_ratio = (
+        (usage_total / runs_total)
+        if usage_total is not None and runs_total > 0
+        else None
+    )
 
     return {
         "version": 1,

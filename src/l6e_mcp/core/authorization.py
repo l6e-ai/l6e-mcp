@@ -174,8 +174,10 @@ def authorize_call(
                 tool_name=tool_name,
                 model_requested=session.model,
                 model_used=local_model,
-                estimated_prompt_tokens=prompt_tokens,
-                estimated_completion_tokens=completion_tokens,
+                estimated_prompt_tokens=prompt_tokens if prompt_tokens is not None else 0,
+                estimated_completion_tokens=(
+                    completion_tokens if completion_tokens is not None else 0
+                ),
                 estimated_cost_usd=local_meta.cost_usd,
                 rerouted=True,
                 actual_prompt_tokens=actual_prompt_tokens if use_actual else None,
@@ -248,8 +250,8 @@ def authorize_call(
         tool_name=tool_name,
         model_requested=session.model,
         model_used=model_used,
-        estimated_prompt_tokens=prompt_tokens,
-        estimated_completion_tokens=completion_tokens,
+        estimated_prompt_tokens=prompt_tokens if prompt_tokens is not None else 0,
+        estimated_completion_tokens=completion_tokens if completion_tokens is not None else 0,
         estimated_cost_usd=model_cost_meta.cost_usd,
         rerouted=decision.action == "reroute",
         actual_prompt_tokens=actual_prompt_tokens if use_actual else None,

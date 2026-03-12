@@ -359,7 +359,11 @@ async def test_spend_is_readonly(client):
     )
     assert not r1.is_error
     assert not r2.is_error
-    assert r1.data == r2.data
+    assert r1.data["spent_usd"] == r2.data["spent_usd"]
+    assert r1.data["remaining_usd"] == r2.data["remaining_usd"]
+    assert r1.data["calls_made"] == r2.data["calls_made"]
+    assert r2.data["overhead_calls"] == r1.data["overhead_calls"] + 1
+    assert r2.data["overhead_usd"] > r1.data["overhead_usd"]
 
 
 async def test_run_status_exposes_mode_coverage_and_lag_indicators(client):
@@ -413,12 +417,22 @@ async def test_session_end_writes_jsonl_with_reconciled_record(client, tmp_path)
         raise_on_error=False,
     )
     assert not end.is_error
+    assert end.data["overhead_calls"] >= 2
+    assert end.data["overhead_usd"] > 0
+    assert end.data["net_savings_usd"] == pytest.approx(
+        end.data["savings_usd"] - end.data["overhead_usd"]
+    )
     log = tmp_path / "runs.jsonl"
     assert log.exists()
     entry = json.loads(log.read_text().strip())
     assert entry["run_id"] == session["session_id"]
     assert entry["records"][0]["completion_tokens"] == 45
     assert entry["records"][0]["model_used"] == "gpt-4o-mini"
+    assert entry["overhead_calls"] >= 2
+    assert entry["overhead_usd"] > 0
+    assert entry["net_savings_usd"] == pytest.approx(
+        entry["savings_usd"] - entry["overhead_usd"]
+    )
 
 
 async def test_session_end_writes_subagent_metadata_to_jsonl(client, tmp_path):

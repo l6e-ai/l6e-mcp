@@ -386,7 +386,7 @@ async def litellm_success_callback(request: Request) -> JSONResponse:
     except Exception as exc:
         persist_unmatched_usage(
             session_id=session_id,
-            usage_source=effective_source,
+            usage_source=effective_source or "unknown",
             reason="reconcile_error",
             payload=payload,
             call_id=call_id,

@@ -24,6 +24,7 @@ from l6e._types import (
 from l6e_mcp.contracts.exactness import ExactnessState
 from l6e_mcp.contracts.mode_coverage import ModeCoverage, mode_exact_capable_for_call_mode
 from l6e_mcp.core.exactness import normalize_call_exactness_state
+from l6e_mcp.overhead import estimate_overhead
 from l6e_mcp.store import schema as store_schema
 
 _DEFAULT_DB_PATH = Path.home() / ".l6e" / "sessions.db"
@@ -48,6 +49,8 @@ class SessionState:
     created_at: float
     ended_at: float | None
     finalized_at: float | None
+    checkpoint_calls: int
+    status_calls: int
     advanced_fallback_enabled: bool
     ask_mode_exact_capable: bool
     plan_mode_exact_capable: bool
@@ -161,6 +164,8 @@ class LocalSessionStore:
                     agent_mode_exact_capable INTEGER NOT NULL DEFAULT 0,
                     state TEXT NOT NULL,
                     next_call_index INTEGER NOT NULL,
+                    checkpoint_calls INTEGER NOT NULL DEFAULT 0,
+                    status_calls INTEGER NOT NULL DEFAULT 0,
                     created_at REAL NOT NULL,
                     ended_at REAL,
                     finalized_at REAL
@@ -260,6 +265,18 @@ class LocalSessionStore:
                 conn,
                 "sessions",
                 "agent_mode_exact_capable",
+                "INTEGER NOT NULL DEFAULT 0",
+            )
+            _ensure_column(
+                conn,
+                "sessions",
+                "checkpoint_calls",
+                "INTEGER NOT NULL DEFAULT 0",
+            )
+            _ensure_column(
+                conn,
+                "sessions",
+                "status_calls",
                 "INTEGER NOT NULL DEFAULT 0",
             )
             _ensure_column(
@@ -368,8 +385,8 @@ class LocalSessionStore:
                     accounting_mode, usage_channel, advanced_fallback_enabled,
                     ask_mode_exact_capable,
                     plan_mode_exact_capable, agent_mode_exact_capable, state, next_call_index,
-                    created_at, ended_at, finalized_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, ?, NULL, NULL)
+                    checkpoint_calls, status_calls, created_at, ended_at, finalized_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, 0, 0, ?, NULL, NULL)
                 """,
                 (
                     session_id,
@@ -805,6 +822,40 @@ class LocalSessionStore:
             raise RuntimeError(f"Failed to finalize session '{session_id}'")
         return session
 
+    def increment_checkpoint_calls(self, session_id: str, increment_by: int = 1) -> None:
+        if increment_by <= 0:
+            return
+        with self._connect() as conn:
+            updated = conn.execute(
+                """
+                UPDATE sessions
+                SET checkpoint_calls = checkpoint_calls + ?
+                WHERE session_id = ? AND state != 'finalized'
+                """,
+                (increment_by, session_id),
+            )
+            if updated.rowcount == 0:
+                raise KeyError(
+                    f"Unknown session '{session_id}'. Already ended or never started."
+                )
+
+    def increment_status_calls(self, session_id: str, increment_by: int = 1) -> None:
+        if increment_by <= 0:
+            return
+        with self._connect() as conn:
+            updated = conn.execute(
+                """
+                UPDATE sessions
+                SET status_calls = status_calls + ?
+                WHERE session_id = ? AND state != 'finalized'
+                """,
+                (increment_by, session_id),
+            )
+            if updated.rowcount == 0:
+                raise KeyError(
+                    f"Unknown session '{session_id}'. Already ended or never started."
+                )
+
 
 def session_run_summary(session: SessionState, calls: list[CallState]) -> RunSummary:
     estimator = _estimator_for_policy(session.policy)
@@ -848,18 +899,32 @@ def session_run_summary(session: SessionState, calls: list[CallState]) -> RunSum
             reroutes += 1
         else:
             counterfactual_cost += record.cost_usd
+    savings_usd = max(0.0, counterfactual_cost - total_cost)
+    overhead_usd, overhead_calls = estimate_overhead(
+        model=session.model,
+        estimator=estimator,
+        tool_call_counts={
+            "l6e_run_start": 1,
+            "l6e_authorize_call": session.checkpoint_calls,
+            "l6e_run_status": session.status_calls,
+            "l6e_run_end": 1,
+        },
+    )
     return RunSummary(
         run_id=session.session_id,
         policy=session.policy,
         total_cost=total_cost,
         calls_made=len(records),
         reroutes=reroutes,
-        savings_usd=max(0.0, counterfactual_cost - total_cost),
+        savings_usd=savings_usd,
         records=tuple(records),
         source=session.source,
         subagent_calls=subagent_calls,
         subagent_spend_usd=subagent_spend_usd,
         subagents=tuple(subagent_rollups.values()),
+        overhead_usd=overhead_usd,
+        overhead_calls=overhead_calls,
+        net_savings_usd=savings_usd - overhead_usd,
     )
 
 
@@ -934,6 +999,12 @@ def _session_from_row(row: sqlite3.Row) -> SessionState:
         ),
         state=str(row["state"]),
         next_call_index=int(row["next_call_index"]),
+        checkpoint_calls=(
+            int(row["checkpoint_calls"]) if "checkpoint_calls" in row.keys() else 0  # noqa: SIM118
+        ),
+        status_calls=(
+            int(row["status_calls"]) if "status_calls" in row.keys() else 0  # noqa: SIM118
+        ),
         created_at=float(row["created_at"]),
         ended_at=float(row["ended_at"]) if row["ended_at"] is not None else None,
         finalized_at=(

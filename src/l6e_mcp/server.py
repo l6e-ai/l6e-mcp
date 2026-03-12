@@ -178,6 +178,9 @@ def _spend_snapshot(session: SessionState) -> dict:
         "subagent_calls": summary.subagent_calls,
         "subagent_spend_usd": round(summary.subagent_spend_usd, 6),
         "subagents": [dataclasses.asdict(subagent) for subagent in summary.subagents],
+        "overhead_usd": round(summary.overhead_usd, 6),
+        "overhead_calls": summary.overhead_calls,
+        "net_savings_usd": round(summary.net_savings_usd, 6),
         "exactness_state": run_exactness.value,
         "exactness_reason": exactness_reason,
         "exactness_breakdown": exactness_breakdown,
@@ -422,6 +425,7 @@ def l6e_authorize_call(
         actual_prompt_tokens=actual_prompt_tokens,
         actual_completion_tokens=actual_completion_tokens,
     )
+    store.increment_checkpoint_calls(session_id)
     call_id = decision.call_id
     use_actual = (
         actual_prompt_tokens is not None and actual_completion_tokens is not None
@@ -564,6 +568,8 @@ def l6e_run_status(
     session_id: Annotated[str, "Session ID from l6e_run_start"],
 ) -> dict:
     """Get a read-only spend snapshot. Does not record a call or advance the budget."""
+    store = _get_session_store()
+    store.increment_status_calls(session_id)
     session = _require_session(session_id)
     return _spend_snapshot(session)
 
@@ -600,6 +606,9 @@ def l6e_run_end(
         "calls_made": summary.calls_made,
         "reroutes": summary.reroutes,
         "savings_usd": round(summary.savings_usd, 6),
+        "overhead_usd": round(summary.overhead_usd, 6),
+        "overhead_calls": summary.overhead_calls,
+        "net_savings_usd": round(summary.net_savings_usd, 6),
         "source": summary.source,
     }
 
