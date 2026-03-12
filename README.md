@@ -25,9 +25,19 @@ pip install l6e-mcp
 | `l6e_run_status` | Read-only spend snapshot for the current session. |
 | `l6e_run_end` | Close the session and flush the run log to `.l6e/runs.jsonl`. |
 
-## How it works
+## Running locally without a backend proxy
 
-By default, `l6e-mcp` uses pre-call estimates for budget enforcement:
+When you run `l6e-mcp` without a remote backend proxy, **all budget accounting is based on token estimates that the agent constructs before each call**. There is currently no way for an MCP server to intercept the actual token counts from your LLM provider in real time — the MCP protocol does not expose that response data.
+
+This means the numbers are approximate. The cost you see in `l6e_run_status` reflects what the agent guessed it was about to spend, not what your provider actually billed.
+
+That said, it still works. An agent that is told it has a $2 budget and must check before spending tends to scope tasks more tightly, launch fewer sub-agents, and stop earlier when a task turns out to be more expensive than expected. The behavioral effect — the agent knowing it has a finite budget and that it is spending money — is present even when the accounting is not exact.
+
+**A practical starting point:** Set small budgets, $1–3, and observe how the estimates track against your provider's actual costs for a few sessions. You'll quickly get a sense of how accurate the estimates are for the models and task types you use.
+
+If you need genuinely hard enforcement against actual spend, the self-hosted LiteLLM proxy path (`proxy_mode=True`) or a future hosted relay can feed real token counts back via `l6e_record_usage`.
+
+## How it works
 
 - Budget gate runs before each tool call via `l6e_authorize_call`
 - Session state is persisted locally in SQLite (`~/.l6e/sessions.db`)
