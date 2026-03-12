@@ -212,3 +212,55 @@ def test_create_call_unknown_session_raises(tmp_path):
             estimated_cost_usd=0.001,
             rerouted=False,
         )
+
+
+def test_reconcile_on_finalized_session_raises(tmp_path):
+    sessions, calls = _setup(tmp_path)
+    call = calls.create(
+        session_id="session_cursor_2026-03-12_calltest1",
+        tool_name="planning",
+        model_requested="gpt-4o",
+        model_used="gpt-4o",
+        estimated_prompt_tokens=500,
+        estimated_completion_tokens=200,
+        estimated_cost_usd=0.01,
+        rerouted=False,
+    )
+    sessions.finalize("session_cursor_2026-03-12_calltest1")
+    with pytest.raises(KeyError, match="finalized"):
+        calls.reconcile(
+            call_id=call.call_id,
+            actual_prompt_tokens=400,
+            actual_completion_tokens=150,
+            actual_cost_usd=0.008,
+        )
+
+
+def test_reconcile_rereconcile_with_different_values_updates(tmp_path):
+    _, calls = _setup(tmp_path)
+    call = calls.create(
+        session_id="session_cursor_2026-03-12_calltest1",
+        tool_name="planning",
+        model_requested="gpt-4o",
+        model_used="gpt-4o",
+        estimated_prompt_tokens=500,
+        estimated_completion_tokens=200,
+        estimated_cost_usd=0.01,
+        rerouted=False,
+    )
+    calls.reconcile(
+        call_id=call.call_id,
+        actual_prompt_tokens=400,
+        actual_completion_tokens=150,
+        actual_cost_usd=0.008,
+    )
+    # Re-reconcile with different values — should update (not idempotent path)
+    r2 = calls.reconcile(
+        call_id=call.call_id,
+        actual_prompt_tokens=450,
+        actual_completion_tokens=175,
+        actual_cost_usd=0.009,
+    )
+    assert r2.actual_prompt_tokens == 450
+    assert r2.actual_completion_tokens == 175
+    assert r2.actual_cost_usd == pytest.approx(0.009)

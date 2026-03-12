@@ -100,107 +100,19 @@ def _budget_pressure(pct_used: float) -> str:
 def _spend_snapshot(session: SessionState) -> dict:
     calls = _get_session_store().list_calls_for_session(session.session_id)
     summary = session_run_summary(session, calls)
-    estimator = LiteLLMCostEstimator(
-        fallback_cost_per_1k_tokens=session.policy.unknown_model_cost_per_1k_tokens
-    )
     spent = summary.total_cost
     budget = session.policy.budget
     remaining = budget - spent
     pct_used = (spent / budget * 100.0) if budget > 0 else 0.0
-    call_exactness = [ExactnessState(call.exactness_state) for call in calls]
-    run_exactness = run_exactness_state(call_exactness)
-    pending_exact_calls = sum(
-        1 for state in call_exactness if state == ExactnessState.EXACT_PENDING
-    )
-    unavailable_exact_calls = sum(
-        1 for state in call_exactness if state == ExactnessState.EXACT_UNAVAILABLE
-    )
-    last_reconciled = max(
-        (call.reconciled_at for call in calls if call.reconciled_at),
-        default=None,
-    )
-    exactness_breakdown = {
-        ExactnessState.ESTIMATE_ONLY.value: sum(
-            1 for state in call_exactness if state == ExactnessState.ESTIMATE_ONLY
-        ),
-        ExactnessState.EXACT_PENDING.value: pending_exact_calls,
-        ExactnessState.EXACT_RECORDED.value: sum(
-            1 for state in call_exactness if state == ExactnessState.EXACT_RECORDED
-        ),
-        ExactnessState.EXACT_UNAVAILABLE.value: unavailable_exact_calls,
-    }
-    mode_coverage = ModeCoverage(
-        ask_mode_exact_capable=session.ask_mode_exact_capable,
-        plan_mode_exact_capable=session.plan_mode_exact_capable,
-        agent_mode_exact_capable=session.agent_mode_exact_capable,
-    )
-    coverage_gaps: list[str] = []
-    if not mode_coverage.ask_mode_exact_capable:
-        coverage_gaps.append("ask")
-    if not mode_coverage.plan_mode_exact_capable:
-        coverage_gaps.append("plan")
-    if not mode_coverage.agent_mode_exact_capable:
-        coverage_gaps.append("agent")
-    exactness_reason = "fully_exact_coverage"
-    if run_exactness.value == "partial_exact":
-        exactness_reason = "mixed_exact_and_non_exact_calls"
-    elif run_exactness.value == "exactness_degraded":
-        exactness_reason = "non_exact_capable_modes_or_unmatched_usage"
-    elif run_exactness.value == "all_estimate_only":
-        exactness_reason = "estimate_only_or_no_reconciliation"
-    pricing_warnings: list[dict[str, str]] = []
-    warned_models: set[str] = set()
-    for call in calls:
-        model = call.model_used
-        if model in warned_models:
-            continue
-        meta = estimator.estimate_with_metadata(
-            model=model,
-            prompt_tokens=max(1, call.estimated_prompt_tokens),
-            completion_tokens=max(0, call.estimated_completion_tokens),
-            emit_warning=False,
-        )
-        if meta.model_pricing_known:
-            continue
-        warned_models.add(model)
-        pricing_warnings.append(
-            {
-                "model": model,
-                "pricing_source": meta.pricing_source,
-                "pricing_confidence": meta.pricing_confidence,
-                "warning": meta.warning or "unknown model pricing",
-            }
-        )
-    result = {
+    return {
         "spent_usd": round(spent, 6),
         "remaining_usd": round(remaining, 6),
         "budget_usd": budget,
-        "calls_made": summary.calls_made,
-        "reroutes": summary.reroutes,
         "budget_pressure": _budget_pressure(pct_used),
         "pct_used": round(pct_used, 2),
-        "subagent_calls": summary.subagent_calls,
-        "subagent_spend_usd": round(summary.subagent_spend_usd, 6),
-        "subagents": [dataclasses.asdict(subagent) for subagent in summary.subagents],
-        "overhead_usd": round(summary.overhead_usd, 6),
-        "overhead_calls": summary.overhead_calls,
-        "savings_confidence": summary.savings_confidence,
-        "exactness_state": run_exactness.value,
-        "exactness_reason": exactness_reason,
-        "exactness_breakdown": exactness_breakdown,
-        "pending_exact_calls": pending_exact_calls,
-        "unavailable_exact_calls": unavailable_exact_calls,
-        "last_reconciled_at": round(last_reconciled, 6) if last_reconciled is not None else None,
-        "exact_calls": sum(1 for state in call_exactness if state.value == "exact_recorded"),
-        "mode_coverage": mode_coverage.as_dict(),
-        "mode_coverage_gaps": coverage_gaps,
-        "pricing_warnings": pricing_warnings,
+        "calls_made": summary.calls_made,
+        "reroutes": summary.reroutes,
     }
-    if summary.savings_confidence == "exact":
-        result["net_savings_usd"] = round(summary.net_savings_usd, 6)
-    else:
-        result["net_savings_unavailable"] = True
-    return result
 
 
 def _write_active_call(session_id: str, call_id: str) -> None:
@@ -462,7 +374,6 @@ def l6e_authorize_call(
         "remaining_usd": snapshot["remaining_usd"],
         "budget_pressure": snapshot["budget_pressure"],
         "reason": decision.reason,
-        "exactness_state": snapshot["exactness_state"],
     }
     if decision.pricing_warning is not None:
         result["pricing_warning"] = decision.pricing_warning
@@ -486,7 +397,7 @@ def l6e_authorize_call(
         result["estimate_reasoning_tokens"] = decision.estimate_reasoning_tokens
     if decision.internal_turns_multiplier is not None:
         result["internal_turns_multiplier"] = decision.internal_turns_multiplier
-    result["pricing_warnings"] = snapshot.get("pricing_warnings", [])
+    result["pricing_warnings"] = [w for w in (decision.pricing_warning,) if w is not None]
     if call_id is not None:
         result["call_id"] = call_id
         result["correlation"] = _correlation_envelope(
@@ -603,7 +514,8 @@ def l6e_run_end(
             f"Unknown session '{session_id}'. "
             "Already ended or never started."
         )
-    summary = session_run_summary(session, store.list_calls_for_session(session_id))
+    calls = store.list_calls_for_session(session_id)
+    summary = session_run_summary(session, calls)
     log = (
         LocalRunLog(path=Path(session.log_path))
         if session.log_path is not None
@@ -617,6 +529,68 @@ def l6e_run_end(
     if session.advanced_fallback_enabled:
         _clear_active_session_file(session_id)
         _clear_active_call_file(session_id)
+
+    estimator = LiteLLMCostEstimator(
+        fallback_cost_per_1k_tokens=session.policy.unknown_model_cost_per_1k_tokens
+    )
+    call_exactness = [ExactnessState(call.exactness_state) for call in calls]
+    run_exactness = run_exactness_state(call_exactness)
+    pending_exact_calls = sum(
+        1 for state in call_exactness if state == ExactnessState.EXACT_PENDING
+    )
+    unavailable_exact_calls = sum(
+        1 for state in call_exactness if state == ExactnessState.EXACT_UNAVAILABLE
+    )
+    last_reconciled = max(
+        (call.reconciled_at for call in calls if call.reconciled_at),
+        default=None,
+    )
+    exactness_breakdown = {
+        ExactnessState.ESTIMATE_ONLY.value: sum(
+            1 for state in call_exactness if state == ExactnessState.ESTIMATE_ONLY
+        ),
+        ExactnessState.EXACT_PENDING.value: pending_exact_calls,
+        ExactnessState.EXACT_RECORDED.value: sum(
+            1 for state in call_exactness if state == ExactnessState.EXACT_RECORDED
+        ),
+        ExactnessState.EXACT_UNAVAILABLE.value: unavailable_exact_calls,
+    }
+    mode_coverage = ModeCoverage(
+        ask_mode_exact_capable=session.ask_mode_exact_capable,
+        plan_mode_exact_capable=session.plan_mode_exact_capable,
+        agent_mode_exact_capable=session.agent_mode_exact_capable,
+    )
+    coverage_gaps: list[str] = []
+    if not mode_coverage.ask_mode_exact_capable:
+        coverage_gaps.append("ask")
+    if not mode_coverage.plan_mode_exact_capable:
+        coverage_gaps.append("plan")
+    if not mode_coverage.agent_mode_exact_capable:
+        coverage_gaps.append("agent")
+    pricing_warnings: list[dict[str, str]] = []
+    warned_models: set[str] = set()
+    for call in calls:
+        model = call.model_used
+        if model in warned_models:
+            continue
+        meta = estimator.estimate_with_metadata(
+            model=model,
+            prompt_tokens=max(1, call.estimated_prompt_tokens),
+            completion_tokens=max(0, call.estimated_completion_tokens),
+            emit_warning=False,
+        )
+        if meta.model_pricing_known:
+            continue
+        warned_models.add(model)
+        pricing_warnings.append(
+            {
+                "model": model,
+                "pricing_source": meta.pricing_source,
+                "pricing_confidence": meta.pricing_confidence,
+                "warning": meta.warning or "unknown model pricing",
+            }
+        )
+
     result = {
         "session_id": session_id,
         "total_cost_usd": round(summary.total_cost, 6),
@@ -626,6 +600,18 @@ def l6e_run_end(
         "overhead_usd": round(summary.overhead_usd, 6),
         "overhead_calls": summary.overhead_calls,
         "savings_confidence": summary.savings_confidence,
+        "subagent_calls": summary.subagent_calls,
+        "subagent_spend_usd": round(summary.subagent_spend_usd, 6),
+        "subagents": [dataclasses.asdict(subagent) for subagent in summary.subagents],
+        "exactness_state": run_exactness.value,
+        "exactness_breakdown": exactness_breakdown,
+        "pending_exact_calls": pending_exact_calls,
+        "unavailable_exact_calls": unavailable_exact_calls,
+        "last_reconciled_at": round(last_reconciled, 6) if last_reconciled is not None else None,
+        "exact_calls": sum(1 for state in call_exactness if state.value == "exact_recorded"),
+        "mode_coverage": mode_coverage.as_dict(),
+        "mode_coverage_gaps": coverage_gaps,
+        "pricing_warnings": pricing_warnings,
         "source": summary.source,
     }
     if summary.savings_confidence == "exact":

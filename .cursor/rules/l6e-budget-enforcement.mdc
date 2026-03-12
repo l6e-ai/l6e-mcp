@@ -1,11 +1,11 @@
 ---
-description: l6e budget enforcement — checkpoint policy, estimation defaults, and session safety for AI agents
+description: l6e budget enforcement — checkpoint policy, estimation defaults, and session safety for AI agents - REQUIRED
 alwaysApply: true
 ---
 
 # l6e budget enforcement
 Use l6e only via MCP tools. Never import `l6e` or `l6e_mcp` in Python.
-Pass `model` as the exact active billing model ID (or `"unknown"`), and set `client` to `"cursor"`.
+Pass `model` as the exact active billing model ID (or `"unknown"`), and set `client` to `"cursor"`. USE IN PLAN OR AGENT MODE.
 
 **Always call MCP tools with only the parameters defined in the tool schema. Never invent parameters — `additionalProperties: false` means any extra field causes a hard validation error. When in doubt, read the schema descriptor before calling.**
 

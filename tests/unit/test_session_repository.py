@@ -173,3 +173,37 @@ def test_create_session_with_mode_coverage_overrides(tmp_path):
     assert session.ask_mode_exact_capable is True
     assert session.plan_mode_exact_capable is True
     assert session.agent_mode_exact_capable is False
+
+
+def test_finalize_unknown_session_raises(tmp_path):
+    repo = _repo(tmp_path)
+    with pytest.raises(KeyError, match="nonexistent"):
+        repo.finalize("nonexistent")
+
+
+def test_increment_checkpoint_calls_on_finalized_session_raises(tmp_path):
+    repo = _repo(tmp_path)
+    repo.create(
+        session_id="session_cursor_2026-03-12_fin_ckpt1",
+        model="gpt-4o",
+        policy=_policy(),
+        source="mcp",
+        log_path=None,
+    )
+    repo.finalize("session_cursor_2026-03-12_fin_ckpt1")
+    with pytest.raises(KeyError, match="session_cursor_2026-03-12_fin_ckpt1"):
+        repo.increment_checkpoint_calls("session_cursor_2026-03-12_fin_ckpt1")
+
+
+def test_increment_status_calls_on_finalized_session_raises(tmp_path):
+    repo = _repo(tmp_path)
+    repo.create(
+        session_id="session_cursor_2026-03-12_fin_stat1",
+        model="gpt-4o",
+        policy=_policy(),
+        source="mcp",
+        log_path=None,
+    )
+    repo.finalize("session_cursor_2026-03-12_fin_stat1")
+    with pytest.raises(KeyError, match="session_cursor_2026-03-12_fin_stat1"):
+        repo.increment_status_calls("session_cursor_2026-03-12_fin_stat1")

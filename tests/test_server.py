@@ -128,11 +128,6 @@ async def test_checkpoint_returns_call_id_and_updates_spend(client):
         assert "proxy_correlation" not in result.data
         assert result.data["correlation"]["call_id"] == result.data["call_id"]
         assert result.data["spend_so_far_usd"] > 0
-        assert result.data["exactness_state"] in {
-            "all_estimate_only",
-            "partial_exact",
-            "fully_exact_for_supported_calls",
-        }
 
 
 async def test_checkpoint_increments_calls_made(client):
@@ -215,9 +210,17 @@ async def test_checkpoint_accepts_subagent_metadata_and_updates_spend_breakdown(
         raise_on_error=False,
     )
     assert not spend.is_error
-    assert spend.data["subagent_calls"] == 1
-    assert spend.data["subagent_spend_usd"] > 0
-    assert spend.data["subagents"][0]["actor_id"] == "subagent_search_1"
+    assert spend.data["calls_made"] == 1
+
+    end = await client.call_tool(
+        "l6e_run_end",
+        {"session_id": session["session_id"]},
+        raise_on_error=False,
+    )
+    assert not end.is_error
+    assert end.data["subagent_calls"] == 1
+    assert end.data["subagent_spend_usd"] > 0
+    assert end.data["subagents"][0]["actor_id"] == "subagent_search_1"
 
 
 async def test_reconcile_call_updates_existing_pending_call_without_duplication(client):
@@ -362,11 +365,11 @@ async def test_spend_is_readonly(client):
     assert r1.data["spent_usd"] == r2.data["spent_usd"]
     assert r1.data["remaining_usd"] == r2.data["remaining_usd"]
     assert r1.data["calls_made"] == r2.data["calls_made"]
-    assert r2.data["overhead_calls"] == r1.data["overhead_calls"] + 1
-    assert r2.data["overhead_usd"] > r1.data["overhead_usd"]
+    assert "overhead_usd" not in r1.data
+    assert "overhead_calls" not in r1.data
 
 
-async def test_run_status_exposes_mode_coverage_and_lag_indicators(client):
+async def test_run_end_exposes_mode_coverage_and_lag_indicators(client):
     session = await start_session(client, budget_usd=5.0, proxy_mode=True, model="gpt-4o")
     pending = await client.call_tool(
         "l6e_authorize_call",
@@ -380,16 +383,16 @@ async def test_run_status_exposes_mode_coverage_and_lag_indicators(client):
     )
     assert not pending.is_error
 
-    status = await client.call_tool(
-        "l6e_run_status",
+    end = await client.call_tool(
+        "l6e_run_end",
         {"session_id": session["session_id"]},
         raise_on_error=False,
     )
-    assert not status.is_error
-    assert status.data["exactness_state"] == "exactness_degraded"
-    assert status.data["pending_exact_calls"] == 0
-    assert status.data["unavailable_exact_calls"] == 1
-    assert status.data["mode_coverage"]["agent_mode_exact_capable"] is False
+    assert not end.is_error
+    assert end.data["exactness_state"] == "exactness_degraded"
+    assert end.data["pending_exact_calls"] == 0
+    assert end.data["unavailable_exact_calls"] == 1
+    assert end.data["mode_coverage"]["agent_mode_exact_capable"] is False
 
 
 async def test_session_end_writes_jsonl_with_reconciled_record(client, tmp_path):
@@ -578,21 +581,21 @@ async def test_unknown_model_pricing_reroutes_when_local_model_priced(client, mo
     assert result.data["target_model"] == "gpt-4o-mini"
 
 
-async def test_run_status_returns_pricing_warnings(client):
+async def test_run_end_returns_pricing_warnings(client):
     session = await start_session(client, budget_usd=10.0, model="unknown-model-123")
     await client.call_tool(
         "l6e_authorize_call",
         {"session_id": session["session_id"], "tool_name": "read_files", "estimated_tokens": 500},
         raise_on_error=False,
     )
-    status = await client.call_tool(
-        "l6e_run_status",
+    end = await client.call_tool(
+        "l6e_run_end",
         {"session_id": session["session_id"]},
         raise_on_error=False,
     )
-    assert not status.is_error
-    assert isinstance(status.data["pricing_warnings"], list)
-    assert len(status.data["pricing_warnings"]) == 1
+    assert not end.is_error
+    assert isinstance(end.data["pricing_warnings"], list)
+    assert len(end.data["pricing_warnings"]) == 1
 
 
 async def test_estimate_only_mode_omits_net_savings_and_includes_note(client, tmp_path):
@@ -611,10 +614,10 @@ async def test_estimate_only_mode_omits_net_savings_and_includes_note(client, tm
         raise_on_error=False,
     )
     assert not status.is_error
-    assert status.data["savings_confidence"] == "estimate_only"
+    assert "overhead_usd" not in status.data
+    assert "savings_confidence" not in status.data
     assert "net_savings_usd" not in status.data
-    assert status.data.get("net_savings_unavailable") is True
-    assert "net_savings_note" not in status.data
+    assert "net_savings_unavailable" not in status.data
 
     end = await client.call_tool(
         "l6e_run_end",
@@ -660,9 +663,9 @@ async def test_exact_mode_includes_net_savings_usd(client, tmp_path):
         raise_on_error=False,
     )
     assert not status.is_error
-    assert status.data["savings_confidence"] == "exact"
-    assert "net_savings_usd" in status.data
-    assert "net_savings_note" not in status.data
+    assert "overhead_usd" not in status.data
+    assert "savings_confidence" not in status.data
+    assert "net_savings_usd" not in status.data
     assert "net_savings_unavailable" not in status.data
 
     end = await client.call_tool(
@@ -676,3 +679,81 @@ async def test_exact_mode_includes_net_savings_usd(client, tmp_path):
     assert end.data["net_savings_usd"] == pytest.approx(
         end.data["savings_usd"] - end.data["overhead_usd"]
     )
+
+
+# --- Error path tests ---
+
+
+async def test_run_start_invalid_unknown_model_pricing_mode(client):
+    result = await client.call_tool(
+        "l6e_run_start",
+        {"budget_usd": 1.0, "model": "gpt-4o", "unknown_model_pricing_mode": "not_valid"},
+        raise_on_error=False,
+    )
+    assert result.is_error
+    error_text = str(result)
+    assert "warn_only" in error_text
+
+
+async def test_run_status_unknown_session_returns_error(client):
+    result = await client.call_tool(
+        "l6e_run_status",
+        {"session_id": "session_unknown_2026-03-12_deadbeef"},
+        raise_on_error=False,
+    )
+    assert result.is_error
+    assert "session_unknown_2026-03-12_deadbeef" in str(result)
+
+
+async def test_record_usage_unknown_call_id_returns_error(client):
+    result = await client.call_tool(
+        "l6e_record_usage",
+        {
+            "call_id": "call_does_not_exist",
+            "actual_prompt_tokens": 100,
+            "actual_completion_tokens": 50,
+        },
+        raise_on_error=False,
+    )
+    assert result.is_error
+    assert "call_does_not_exist" in str(result)
+
+
+async def test_run_end_deduplicates_pricing_warnings_for_repeated_model(client):
+    """Same unknown model across multiple calls produces only one pricing warning."""
+    session = await start_session(client, budget_usd=10.0, model="unknown-exotic-model")
+    session_id = session["session_id"]
+    for _ in range(3):
+        await client.call_tool(
+            "l6e_authorize_call",
+            {"session_id": session_id, "tool_name": "read_files", "estimated_tokens": 200},
+            raise_on_error=False,
+        )
+    end = await client.call_tool(
+        "l6e_run_end",
+        {"session_id": session_id},
+        raise_on_error=False,
+    )
+    assert not end.is_error
+    warnings = end.data["pricing_warnings"]
+    assert len(warnings) == 1
+    assert warnings[0]["model"] == "unknown-exotic-model"
+
+
+async def test_run_end_on_already_finalized_session_returns_error(client):
+    session = await start_session(client, budget_usd=1.0)
+    session_id = session["session_id"]
+    # First end — succeeds
+    end1 = await client.call_tool(
+        "l6e_run_end",
+        {"session_id": session_id},
+        raise_on_error=False,
+    )
+    assert not end1.is_error
+    # Second end — should fail because session is already finalized
+    end2 = await client.call_tool(
+        "l6e_run_end",
+        {"session_id": session_id},
+        raise_on_error=False,
+    )
+    assert end2.is_error

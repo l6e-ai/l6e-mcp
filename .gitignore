@@ -8,3 +8,5 @@ dist/
 .l6e/
 .coverage
 .pytest_cache/
+.coverage
+coverage.json
