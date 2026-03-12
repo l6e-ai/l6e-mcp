@@ -3,7 +3,7 @@ name: Publish l6e-mcp to PyPI
 on:
   push:
     tags:
-      - 'v*'
+      - 'mcp/v*'
   workflow_dispatch:
 
 permissions:
@@ -17,10 +17,6 @@ jobs:
       url: https://pypi.org/project/l6e-mcp/
     permissions:
       id-token: write # required for trusted publishing via PyPI
-
-    defaults:
-      run:
-        working-directory: ./mcp
 
     steps:
       - name: Checkout repository
@@ -48,11 +44,13 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Verify tag matches version
+        if: github.event_name != 'workflow_dispatch'
         run: |
           TAG="${GITHUB_REF_NAME}"
+          # Strip the "mcp/" package prefix, then strip any pre-release suffix
           EXPECTED="v${{ steps.version.outputs.version }}"
           EXPECTED_TRIMMED=$(echo "$EXPECTED" | sed 's/-.*//')
-          TAG_TRIMMED=$(echo "$TAG" | sed 's/-.*//')
+          TAG_TRIMMED=$(echo "$TAG" | sed 's|^mcp/||' | sed 's/-.*//')
           echo "Tag: $TAG_TRIMMED; Expected: $EXPECTED_TRIMMED"
           if [ "$TAG_TRIMMED" != "$EXPECTED_TRIMMED" ]; then
             echo 'Tag does not match version. Aborting.' >&2
@@ -76,11 +74,11 @@ jobs:
           source .venv_test/bin/activate
           python -m pip install --upgrade pip
           pip install dist/*.whl
-          python -c "import l6e_mcp, sys; print(l6e_mcp.__file__)" || true
-          l6e-mcp --help | head -n 5 || true
+          python -c "import l6e_mcp, sys; print(l6e_mcp.__file__)"
+          l6e-mcp --help | head -n 5
 
       - name: Publish package distributions to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          packages-dir: mcp/dist/
+          packages-dir: dist/
           verify-metadata: true

@@ -1,3 +1,5 @@
 [console_scripts]
+l6e-calibration-generate = l6e_mcp.tools.calibration_generator:main
 l6e-callback-server = l6e_mcp.litellm_proxy.callback_server:main
+l6e-hosted-edge-reconcile = l6e_mcp.tools.hosted_edge_reconcile:main
 l6e-mcp = l6e_mcp.server:main

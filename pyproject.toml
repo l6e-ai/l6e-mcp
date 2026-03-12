@@ -2,7 +2,9 @@
 name = "l6e-mcp"
 version = "0.1.0"
 description = "Session-scoped budget enforcement for Cursor, Claude Code, and Windsurf."
+readme = "README.md"
 license = "Apache-2.0"
+license-files = ["LICEN[CS]E*"]
 requires-python = ">=3.11"
 dependencies = [
     "l6e>=0.1.0",
