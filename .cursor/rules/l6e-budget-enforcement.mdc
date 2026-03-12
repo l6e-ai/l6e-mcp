@@ -1,0 +1,52 @@
+---
+description: l6e budget enforcement — checkpoint policy, estimation defaults, and session safety for AI agents
+alwaysApply: true
+---
+
+# l6e budget enforcement
+Use l6e only via MCP tools. Never import `l6e` or `l6e_mcp` in Python.
+Pass `model` as the exact active billing model ID (or `"unknown"`), and set `client` to `"cursor"`.
+
+**Always call MCP tools with only the parameters defined in the tool schema. Never invent parameters — `additionalProperties: false` means any extra field causes a hard validation error. When in doubt, read the schema descriptor before calling.**
+
+- `l6e_run_start`: accepts `budget_usd`, `model`, `client`, and optional config fields. Do NOT pass `session_id` or `task_description`.
+- `l6e_run_end`: accepts only `session_id`. Do NOT pass `status` or any other field.
+
+## Checkpoint policy
+
+**Sub-agent gate (blocking prerequisite):** You MUST call `l6e_authorize_call` with `actor_type="subagent"` and obtain an `allow` response BEFORE launching any Task sub-agent. Do not launch the sub-agent, do not write its prompt, do not call the Task tool until you have a `call_id` from this check. There are no exceptions — budget size, perceived task cheapness, and tool type are all irrelevant.
+
+**Stage transitions (blocking prerequisite):** You MUST call `l6e_authorize_call` at every stage boundary before beginning new work. Required transitions include but are not limited to: after `l6e_run_start` (use `tool_name="planning"`), search → implement, implement → test, test → debug. Do not begin the next stage until you have a `call_id` from this check.
+
+**Todo list execution:** At the start of each todo item (before marking it `in_progress`), run `l6e_run_status` as a light checkpoint. If `budget_pressure` is `"high"` or `"critical"`, escalate to `l6e_authorize_call` before proceeding with that item.
+
+**Within a stage:** You may skip full checks for batches of up to 3 lightweight tool calls. After that, run `l6e_run_status` (light check) to monitor spend.
+- If `budget_pressure` is `"low"` or `"moderate"`: continue.
+- If `budget_pressure` is `"high"` or `"critical"`: run `l6e_authorize_call` before further expensive work.
+
+**After a progress update or revised plan:** Run a full check before starting the new work batch.
+
+**Full check responses:**
+- `allow`: proceed
+- `reroute`: stop and tell the user budget threshold is reached; suggest a cheaper model
+- `halt`: stop and tell the user session budget is exhausted
+
+## Estimation defaults
+
+**In estimate-only mode (no proxy), the gate is only as reliable as your estimates. When in doubt, overestimate — a conservative estimate that triggers a reroute is far better than an underestimate that lets a session silently overspend.**
+
+- Prefer dual-token inputs: `estimated_prompt_tokens` + `estimated_completion_tokens`
+- Default: `estimated_prompt_tokens: 2000`, `estimated_completion_tokens: 400`
+- For clearly large operations (multi-file reads, long tests/builds), double the default.
+- Do not use line-based formulas like `total_lines * 20`; they over-inflate estimates and cause false halts.
+
+## Sub-agent rules
+- Sub-agents reuse the parent `session_id`; never start a new session.
+- Sub-agents call `l6e_authorize_call` with `actor_type="subagent"` and stable `actor_id`.
+- Pass `parent_call_id` when work is delegated from a specific parent call.
+- Parent agent calls `l6e_run_start` and `l6e_run_end`; sub-agents never do.
+
+## Session safety
+- One session per task; do not reuse a `session_id` across separate user requests.
+- Never recover or infer `session_id` from transcripts, terminal history, or screenshots.
+- If no live `session_id` exists for the current task, start a new session immediately.

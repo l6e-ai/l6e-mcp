@@ -49,6 +49,7 @@ def test_session_store_reconciles_existing_call(tmp_path):
     assert summary.overhead_calls >= 2
     assert summary.overhead_usd > 0
     assert summary.net_savings_usd == pytest.approx(summary.savings_usd - summary.overhead_usd)
+    assert summary.savings_confidence == "exact"
 
 
 def test_session_store_shares_state_across_instances(tmp_path):

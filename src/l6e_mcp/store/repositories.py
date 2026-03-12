@@ -1,23 +1,19 @@
-"""Repository wrapper around the local SQLite session store."""
+"""Repository aggregator for service-layer boundaries."""
 from __future__ import annotations
 
-from l6e_mcp.session_store import LocalSessionStore
+from pathlib import Path
+
+from l6e_mcp.store._connection import _db_path
+from l6e_mcp.store.calls import CallRepository
+from l6e_mcp.store.diagnostics import DiagnosticsRepository
+from l6e_mcp.store.sessions import SessionRepository
 
 
 class LocalRepositories:
-    """Thin repository aggregator for service-layer boundaries."""
+    """Wires the three focused repositories over a shared DB path."""
 
-    def __init__(self, store: LocalSessionStore | None = None) -> None:
-        self.store = store or LocalSessionStore()
-
-    @property
-    def sessions(self) -> LocalSessionStore:
-        return self.store
-
-    @property
-    def calls(self) -> LocalSessionStore:
-        return self.store
-
-    @property
-    def diagnostics(self) -> LocalSessionStore:
-        return self.store
+    def __init__(self, db_path: Path | None = None) -> None:
+        path = db_path or _db_path()
+        self.sessions = SessionRepository(path)
+        self.calls = CallRepository(path)
+        self.diagnostics = DiagnosticsRepository(path)
