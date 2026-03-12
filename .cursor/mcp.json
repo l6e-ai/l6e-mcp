@@ -1,0 +1,9 @@
+{
+    "mcpServers": {
+        "l6e-budget": {
+            "command": "l6e-mcp",
+            "env": {
+            }
+        }
+    }
+}

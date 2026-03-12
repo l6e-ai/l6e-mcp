@@ -7,6 +7,11 @@ alwaysApply: true
 Use l6e only via MCP tools. Never import `l6e` or `l6e_mcp` in Python.
 Pass `model` as the exact active billing model ID (or `"unknown"`), and set `client` to `"cursor"`.
 
+**Always call MCP tools with only the parameters defined in the tool schema. Never invent parameters — `additionalProperties: false` means any extra field causes a hard validation error. When in doubt, read the schema descriptor before calling.**
+
+- `l6e_run_start`: accepts `budget_usd`, `model`, `client`, and optional config fields. Do NOT pass `session_id` or `task_description`.
+- `l6e_run_end`: accepts only `session_id`. Do NOT pass `status` or any other field.
+
 ## Checkpoint policy
 
 **Sub-agent gate (blocking prerequisite):** You MUST call `l6e_authorize_call` with `actor_type="subagent"` and obtain an `allow` response BEFORE launching any Task sub-agent. Do not launch the sub-agent, do not write its prompt, do not call the Task tool until you have a `call_id` from this check. There are no exceptions — budget size, perceived task cheapness, and tool type are all irrelevant.
