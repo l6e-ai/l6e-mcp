@@ -1,4 +1,8 @@
-.pytest_cache/
-__pycache__/
-.l6e/
+*__pycache__/
 build/
+dist/
+*.egg-info/
+.venv*/
+.ruff_cache/
+.mypy_cache/
+.l6e/
