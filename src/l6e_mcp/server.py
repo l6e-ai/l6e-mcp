@@ -171,7 +171,7 @@ def _spend_snapshot(session: SessionState) -> dict:
                 "warning": meta.warning or "unknown model pricing",
             }
         )
-    return {
+    result = {
         "spent_usd": round(spent, 6),
         "remaining_usd": round(remaining, 6),
         "budget_usd": budget,
@@ -184,7 +184,7 @@ def _spend_snapshot(session: SessionState) -> dict:
         "subagents": [dataclasses.asdict(subagent) for subagent in summary.subagents],
         "overhead_usd": round(summary.overhead_usd, 6),
         "overhead_calls": summary.overhead_calls,
-        "net_savings_usd": round(summary.net_savings_usd, 6),
+        "savings_confidence": summary.savings_confidence,
         "exactness_state": run_exactness.value,
         "exactness_reason": exactness_reason,
         "exactness_breakdown": exactness_breakdown,
@@ -196,6 +196,11 @@ def _spend_snapshot(session: SessionState) -> dict:
         "mode_coverage_gaps": coverage_gaps,
         "pricing_warnings": pricing_warnings,
     }
+    if summary.savings_confidence == "exact":
+        result["net_savings_usd"] = round(summary.net_savings_usd, 6)
+    else:
+        result["net_savings_unavailable"] = True
+    return result
 
 
 def _write_active_call(session_id: str, call_id: str) -> None:
@@ -349,16 +354,24 @@ def l6e_run_start(
         _ACTIVE_SESSION_FILE.parent.mkdir(parents=True, exist_ok=True)
         _ACTIVE_SESSION_FILE.write_text(session_id, encoding="utf-8")
 
+    effective_accounting_mode = accounting_mode or (
+        "exact_optional" if proxy_mode else "estimate_only"
+    )
     result = {
         "session_id": session_id,
         "budget_usd": budget_usd,
         "model": model,
-        "accounting_mode": accounting_mode or ("exact_optional" if proxy_mode else "estimate_only"),
+        "accounting_mode": effective_accounting_mode,
         "usage_channel": usage_channel or ("self_hosted_relay" if proxy_mode else "none"),
         "advanced_fallback_enabled": advanced_fallback,
         "fallback_correlation_capability": "active_file" if advanced_fallback else "metadata_only",
         "unknown_model_pricing_mode": policy.unknown_model_pricing_mode.value,
     }
+    if effective_accounting_mode == "estimate_only":
+        result["savings_note"] = (
+            "overhead tracking is active but net_savings_usd requires exact accounting "
+            "(hosted-edge or self-hosted proxy). savings_confidence will be estimate_only."
+        )
     if proxy_mode and advanced_fallback:
         result["proxy_mode"] = True
         result["active_session_file"] = str(_ACTIVE_SESSION_FILE)
@@ -604,7 +617,7 @@ def l6e_run_end(
     if session.advanced_fallback_enabled:
         _clear_active_session_file(session_id)
         _clear_active_call_file(session_id)
-    return {
+    result = {
         "session_id": session_id,
         "total_cost_usd": round(summary.total_cost, 6),
         "calls_made": summary.calls_made,
@@ -612,9 +625,14 @@ def l6e_run_end(
         "savings_usd": round(summary.savings_usd, 6),
         "overhead_usd": round(summary.overhead_usd, 6),
         "overhead_calls": summary.overhead_calls,
-        "net_savings_usd": round(summary.net_savings_usd, 6),
+        "savings_confidence": summary.savings_confidence,
         "source": summary.source,
     }
+    if summary.savings_confidence == "exact":
+        result["net_savings_usd"] = round(summary.net_savings_usd, 6)
+    else:
+        result["net_savings_unavailable"] = True
+    return result
 
 
 def main() -> None:

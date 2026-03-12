@@ -593,3 +593,86 @@ async def test_run_status_returns_pricing_warnings(client):
     assert not status.is_error
     assert isinstance(status.data["pricing_warnings"], list)
     assert len(status.data["pricing_warnings"]) == 1
+
+
+async def test_estimate_only_mode_omits_net_savings_and_includes_note(client, tmp_path):
+    """In estimate-only mode net_savings_usd is omitted; a boolean flag replaces it."""
+    session = await start_session(client, budget_usd=10.0, model="gpt-4o")
+    assert "savings_note" in session
+    await client.call_tool(
+        "l6e_authorize_call",
+        {"session_id": session["session_id"], "tool_name": "read_files", "estimated_tokens": 500},
+        raise_on_error=False,
+    )
+
+    status = await client.call_tool(
+        "l6e_run_status",
+        {"session_id": session["session_id"]},
+        raise_on_error=False,
+    )
+    assert not status.is_error
+    assert status.data["savings_confidence"] == "estimate_only"
+    assert "net_savings_usd" not in status.data
+    assert status.data.get("net_savings_unavailable") is True
+    assert "net_savings_note" not in status.data
+
+    end = await client.call_tool(
+        "l6e_run_end",
+        {"session_id": session["session_id"]},
+        raise_on_error=False,
+    )
+    assert not end.is_error
+    assert end.data["savings_confidence"] == "estimate_only"
+    assert "net_savings_usd" not in end.data
+    assert end.data.get("net_savings_unavailable") is True
+    assert "net_savings_note" not in end.data
+
+    log = tmp_path / "runs.jsonl"
+    entry = json.loads(log.read_text().strip())
+    assert entry["savings_confidence"] == "estimate_only"
+    assert entry["net_savings_usd"] == pytest.approx(
+        entry["savings_usd"] - entry["overhead_usd"]
+    )
+
+
+async def test_exact_mode_includes_net_savings_usd(client, tmp_path):
+    """In exact mode (all calls reconciled) net_savings_usd is present in responses."""
+    session = await start_session(client, budget_usd=10.0, proxy_mode=True, model="gpt-4o")
+    checkpoint = await client.call_tool(
+        "l6e_authorize_call",
+        {"session_id": session["session_id"], "tool_name": "read_files", "estimated_tokens": 500},
+        raise_on_error=False,
+    )
+    await client.call_tool(
+        "l6e_record_usage",
+        {
+            "call_id": checkpoint.data["call_id"],
+            "actual_prompt_tokens": 500,
+            "actual_completion_tokens": 100,
+            "model_used": "gpt-4o",
+        },
+        raise_on_error=False,
+    )
+
+    status = await client.call_tool(
+        "l6e_run_status",
+        {"session_id": session["session_id"]},
+        raise_on_error=False,
+    )
+    assert not status.is_error
+    assert status.data["savings_confidence"] == "exact"
+    assert "net_savings_usd" in status.data
+    assert "net_savings_note" not in status.data
+    assert "net_savings_unavailable" not in status.data
+
+    end = await client.call_tool(
+        "l6e_run_end",
+        {"session_id": session["session_id"]},
+        raise_on_error=False,
+    )
+    assert not end.is_error
+    assert end.data["savings_confidence"] == "exact"
+    assert "net_savings_usd" in end.data
+    assert end.data["net_savings_usd"] == pytest.approx(
+        end.data["savings_usd"] - end.data["overhead_usd"]
+    )
