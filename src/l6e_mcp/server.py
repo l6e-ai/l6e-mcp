@@ -12,7 +12,7 @@ from typing import Annotated
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 from l6e._log import LocalRunLog
-from l6e._types import BudgetMode, PipelinePolicy
+from l6e._types import BudgetMode, PipelinePolicy, UnknownModelPricingMode
 from l6e.costs import LiteLLMCostEstimator
 from l6e.gate import ConstraintGate
 from l6e.router import LocalRouter
@@ -96,6 +96,9 @@ def _budget_pressure(pct_used: float) -> str:
 def _spend_snapshot(session: SessionState) -> dict:
     calls = _get_session_store().list_calls_for_session(session.session_id)
     summary = session_run_summary(session, calls)
+    estimator = LiteLLMCostEstimator(
+        fallback_cost_per_1k_tokens=session.policy.unknown_model_cost_per_1k_tokens
+    )
     spent = summary.total_cost
     budget = session.policy.budget
     remaining = budget - spent
@@ -141,6 +144,29 @@ def _spend_snapshot(session: SessionState) -> dict:
         exactness_reason = "non_exact_capable_modes_or_unmatched_usage"
     elif run_exactness.value == "all_estimate_only":
         exactness_reason = "estimate_only_or_no_reconciliation"
+    pricing_warnings: list[dict[str, str]] = []
+    warned_models: set[str] = set()
+    for call in calls:
+        model = call.model_used
+        if model in warned_models:
+            continue
+        meta = estimator.estimate_with_metadata(
+            model=model,
+            prompt_tokens=max(1, call.estimated_prompt_tokens),
+            completion_tokens=max(0, call.estimated_completion_tokens),
+            emit_warning=False,
+        )
+        if meta.model_pricing_known:
+            continue
+        warned_models.add(model)
+        pricing_warnings.append(
+            {
+                "model": model,
+                "pricing_source": meta.pricing_source,
+                "pricing_confidence": meta.pricing_confidence,
+                "warning": meta.warning or "unknown model pricing",
+            }
+        )
     return {
         "spent_usd": round(spent, 6),
         "remaining_usd": round(remaining, 6),
@@ -161,6 +187,7 @@ def _spend_snapshot(session: SessionState) -> dict:
         "exact_calls": sum(1 for state in call_exactness if state.value == "exact_recorded"),
         "mode_coverage": mode_coverage.as_dict(),
         "mode_coverage_gaps": coverage_gaps,
+        "pricing_warnings": pricing_warnings,
     }
 
 
@@ -275,11 +302,26 @@ def l6e_run_start(
         bool | None,
         "Optional override for Agent-mode exactness capability.",
     ] = None,
+    unknown_model_pricing_mode: Annotated[
+        str,
+        "Unknown pricing policy mode: warn_only, reroute_required, or halt_on_unknown_pricing.",
+    ] = "warn_only",
 ) -> dict:
     """Start a new budget-enforced session. Returns session_id to pass to other tools."""
     model = model.strip() or "unknown"
+    try:
+        pricing_mode = UnknownModelPricingMode(unknown_model_pricing_mode)
+    except ValueError as exc:
+        raise ToolError(
+            "unknown_model_pricing_mode must be one of: "
+            "warn_only, reroute_required, halt_on_unknown_pricing"
+        ) from exc
     session_id = _make_session_id(client)
-    policy = PipelinePolicy(budget=budget_usd, budget_mode=BudgetMode.WARN)
+    policy = PipelinePolicy(
+        budget=budget_usd,
+        budget_mode=BudgetMode.WARN,
+        unknown_model_pricing_mode=pricing_mode,
+    )
     log_path = _get_log_path()
     _get_session_store().create_session(
         session_id=session_id,
@@ -308,6 +350,7 @@ def l6e_run_start(
         "usage_channel": usage_channel or ("self_hosted_relay" if proxy_mode else "none"),
         "advanced_fallback_enabled": advanced_fallback,
         "fallback_correlation_capability": "active_file" if advanced_fallback else "metadata_only",
+        "unknown_model_pricing_mode": policy.unknown_model_pricing_mode.value,
     }
     if proxy_mode and advanced_fallback:
         result["proxy_mode"] = True
@@ -321,6 +364,14 @@ def l6e_authorize_call(
     session_id: Annotated[str, "Session ID from l6e_run_start"],
     tool_name: Annotated[str, "Name of the tool or stage about to run"],
     estimated_tokens: Annotated[int, "Estimated prompt token count for this call"] = 500,
+    estimated_prompt_tokens: Annotated[
+        int | None,
+        "Optional explicit prompt token estimate.",
+    ] = None,
+    estimated_completion_tokens: Annotated[
+        int | None,
+        "Optional explicit completion token estimate.",
+    ] = None,
     actor_type: Annotated[
         str,
         "Optional actor type for attribution. Use 'subagent' for child agent work.",
@@ -361,6 +412,8 @@ def l6e_authorize_call(
         session=session,
         tool_name=tool_name,
         estimated_tokens=estimated_tokens,
+        estimated_prompt_tokens=estimated_prompt_tokens,
+        estimated_completion_tokens=estimated_completion_tokens,
         actor_type=actor_type,
         actor_id=actor_id,
         actor_name=actor_name,
@@ -390,6 +443,29 @@ def l6e_authorize_call(
         "reason": decision.reason,
         "exactness_state": snapshot["exactness_state"],
     }
+    if decision.pricing_warning is not None:
+        result["pricing_warning"] = decision.pricing_warning
+    if decision.pricing_confidence is not None:
+        result["pricing_confidence"] = decision.pricing_confidence
+    if decision.pricing_source is not None:
+        result["pricing_source"] = decision.pricing_source
+    if decision.model_pricing_known is not None:
+        result["model_pricing_known"] = decision.model_pricing_known
+    if decision.estimate_source is not None:
+        result["estimate_source"] = decision.estimate_source
+    if decision.estimate_prompt_tokens is not None:
+        result["estimate_prompt_tokens"] = decision.estimate_prompt_tokens
+    if decision.estimate_completion_tokens is not None:
+        result["estimate_completion_tokens"] = decision.estimate_completion_tokens
+    if decision.calibration_multiplier is not None:
+        result["calibration_multiplier"] = decision.calibration_multiplier
+    if decision.effective_multiplier is not None:
+        result["effective_multiplier"] = decision.effective_multiplier
+    if decision.estimate_reasoning_tokens is not None:
+        result["estimate_reasoning_tokens"] = decision.estimate_reasoning_tokens
+    if decision.internal_turns_multiplier is not None:
+        result["internal_turns_multiplier"] = decision.internal_turns_multiplier
+    result["pricing_warnings"] = snapshot.get("pricing_warnings", [])
     if call_id is not None:
         result["call_id"] = call_id
         result["correlation"] = _correlation_envelope(

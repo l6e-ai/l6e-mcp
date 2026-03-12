@@ -1,6 +1,7 @@
 """Budget authorization service used by MCP checkpoint transport."""
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 from l6e.costs import LiteLLMCostEstimator
@@ -8,6 +9,11 @@ from l6e.gate import ConstraintGate
 from l6e.router import LocalRouter
 from l6e.store import InMemoryRunStore
 
+from l6e_mcp.calibration.config import (
+    CalibrationConfig,
+    load_calibration_config,
+    resolve_estimated_tokens,
+)
 from l6e_mcp.session_store import LocalSessionStore, SessionState
 
 
@@ -19,6 +25,17 @@ class AuthorizationDecision:
     reason: str
     call_id: str | None
     target_model: str | None
+    pricing_warning: str | None
+    pricing_confidence: str | None
+    pricing_source: str | None
+    model_pricing_known: bool | None
+    estimate_source: str | None
+    estimate_prompt_tokens: int | None
+    estimate_completion_tokens: int | None
+    calibration_multiplier: float | None
+    effective_multiplier: float | None
+    estimate_reasoning_tokens: int | None
+    internal_turns_multiplier: float | None
 
 
 def authorize_call(
@@ -26,7 +43,9 @@ def authorize_call(
     store: LocalSessionStore,
     session: SessionState,
     tool_name: str,
-    estimated_tokens: int,
+    estimated_tokens: int | None,
+    estimated_prompt_tokens: int | None,
+    estimated_completion_tokens: int | None,
     actor_type: str,
     actor_id: str | None,
     actor_name: str | None,
@@ -52,9 +71,141 @@ def authorize_call(
     use_actual = (
         actual_prompt_tokens is not None and actual_completion_tokens is not None
     )
-    prompt_tokens = actual_prompt_tokens if use_actual else estimated_tokens
-    completion_tokens = actual_completion_tokens if use_actual else 0
-    estimated_cost = estimator.estimate(session.model, prompt_tokens, completion_tokens)
+    if use_actual:
+        prompt_tokens = actual_prompt_tokens
+        completion_tokens = actual_completion_tokens
+        estimate_source = "actual_tokens"
+        calibration_multiplier = 1.0
+        effective_multiplier = 1.0
+        estimate_reasoning_tokens = 0
+        internal_turns_multiplier = 1.0
+    else:
+        calibration_enabled = os.environ.get(
+            "L6E_EXPERIMENTAL_DUAL_TOKEN_ESTIMATION", ""
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        calibration = load_calibration_config() if calibration_enabled else CalibrationConfig()
+        resolved = resolve_estimated_tokens(
+            stage=tool_name,
+            model=session.model,
+            estimated_tokens=estimated_tokens,
+            estimated_prompt_tokens=estimated_prompt_tokens,
+            estimated_completion_tokens=estimated_completion_tokens,
+            calibration=calibration,
+        )
+        prompt_tokens = resolved.prompt_tokens
+        completion_tokens = resolved.completion_tokens
+        estimate_source = resolved.source
+        calibration_multiplier = resolved.multiplier_applied
+        effective_multiplier = resolved.effective_multiplier
+        estimate_reasoning_tokens = resolved.reasoning_tokens
+        internal_turns_multiplier = resolved.internal_turns_multiplier
+    estimate_meta = estimator.estimate_with_metadata(
+        session.model,
+        prompt_tokens,
+        completion_tokens,
+    )
+    estimated_cost = estimate_meta.cost_usd
+
+    if not estimate_meta.model_pricing_known:
+        mode = session.policy.unknown_model_pricing_mode.value
+        if mode == "halt_on_unknown_pricing":
+            return AuthorizationDecision(
+                action="halt",
+                reason="unknown_model_pricing:halt",
+                call_id=None,
+                target_model=None,
+                pricing_warning=estimate_meta.warning,
+                pricing_confidence=estimate_meta.pricing_confidence,
+                pricing_source=estimate_meta.pricing_source,
+                model_pricing_known=False,
+                estimate_source=estimate_source,
+                estimate_prompt_tokens=prompt_tokens,
+                estimate_completion_tokens=completion_tokens,
+                calibration_multiplier=calibration_multiplier,
+                effective_multiplier=effective_multiplier,
+                estimate_reasoning_tokens=estimate_reasoning_tokens,
+                internal_turns_multiplier=internal_turns_multiplier,
+            )
+        if mode == "reroute_required":
+            local_model = LocalRouter().best_local_model()
+            if local_model is None:
+                return AuthorizationDecision(
+                    action="halt",
+                    reason="unknown_model_pricing:no_local_model",
+                    call_id=None,
+                    target_model=None,
+                    pricing_warning=estimate_meta.warning,
+                    pricing_confidence=estimate_meta.pricing_confidence,
+                    pricing_source=estimate_meta.pricing_source,
+                    model_pricing_known=False,
+                    estimate_source=estimate_source,
+                    estimate_prompt_tokens=prompt_tokens,
+                    estimate_completion_tokens=completion_tokens,
+                    calibration_multiplier=calibration_multiplier,
+                    effective_multiplier=effective_multiplier,
+                    estimate_reasoning_tokens=estimate_reasoning_tokens,
+                    internal_turns_multiplier=internal_turns_multiplier,
+                )
+            local_meta = estimator.estimate_with_metadata(
+                local_model,
+                prompt_tokens,
+                completion_tokens,
+            )
+            if not local_meta.model_pricing_known:
+                return AuthorizationDecision(
+                    action="halt",
+                    reason="unknown_model_pricing:local_model_unpriced",
+                    call_id=None,
+                    target_model=None,
+                    pricing_warning=estimate_meta.warning,
+                    pricing_confidence=estimate_meta.pricing_confidence,
+                    pricing_source=estimate_meta.pricing_source,
+                    model_pricing_known=False,
+                    estimate_source=estimate_source,
+                    estimate_prompt_tokens=prompt_tokens,
+                    estimate_completion_tokens=completion_tokens,
+                    calibration_multiplier=calibration_multiplier,
+                    effective_multiplier=effective_multiplier,
+                    estimate_reasoning_tokens=estimate_reasoning_tokens,
+                    internal_turns_multiplier=internal_turns_multiplier,
+                )
+            call = store.create_call(
+                session_id=session.session_id,
+                tool_name=tool_name,
+                model_requested=session.model,
+                model_used=local_model,
+                estimated_prompt_tokens=prompt_tokens,
+                estimated_completion_tokens=completion_tokens,
+                estimated_cost_usd=local_meta.cost_usd,
+                rerouted=True,
+                actual_prompt_tokens=actual_prompt_tokens if use_actual else None,
+                actual_completion_tokens=actual_completion_tokens if use_actual else None,
+                actual_cost_usd=local_meta.cost_usd if use_actual else None,
+                status="reconciled" if use_actual else "pending",
+                actor_type=actor_type,
+                actor_id=actor_id,
+                actor_name=actor_name,
+                parent_call_id=parent_call_id,
+                call_mode=call_mode,
+            )
+            return AuthorizationDecision(
+                action="reroute",
+                reason="unknown_model_pricing:reroute_required",
+                call_id=call.call_id,
+                target_model=local_model,
+                pricing_warning=estimate_meta.warning,
+                pricing_confidence=estimate_meta.pricing_confidence,
+                pricing_source=estimate_meta.pricing_source,
+                model_pricing_known=False,
+                estimate_source=estimate_source,
+                estimate_prompt_tokens=prompt_tokens,
+                estimate_completion_tokens=completion_tokens,
+                calibration_multiplier=calibration_multiplier,
+                effective_multiplier=effective_multiplier,
+                estimate_reasoning_tokens=estimate_reasoning_tokens,
+                internal_turns_multiplier=internal_turns_multiplier,
+            )
+
     decision = gate.check(
         runtime_store,
         model=session.model,
@@ -73,21 +224,37 @@ def authorize_call(
             reason=decision.reason,
             call_id=None,
             target_model=decision.target_model,
+            pricing_warning=estimate_meta.warning,
+            pricing_confidence=estimate_meta.pricing_confidence,
+            pricing_source=estimate_meta.pricing_source,
+            model_pricing_known=estimate_meta.model_pricing_known,
+            estimate_source=estimate_source,
+            estimate_prompt_tokens=prompt_tokens,
+            estimate_completion_tokens=completion_tokens,
+            calibration_multiplier=calibration_multiplier,
+            effective_multiplier=effective_multiplier,
+            estimate_reasoning_tokens=estimate_reasoning_tokens,
+            internal_turns_multiplier=internal_turns_multiplier,
         )
 
     model_used = decision.target_model if decision.action == "reroute" else session.model
+    model_cost_meta = estimator.estimate_with_metadata(
+        model_used,
+        prompt_tokens,
+        completion_tokens,
+    )
     call = store.create_call(
         session_id=session.session_id,
         tool_name=tool_name,
         model_requested=session.model,
         model_used=model_used,
-        estimated_prompt_tokens=estimated_tokens,
-        estimated_completion_tokens=0,
-        estimated_cost_usd=estimator.estimate(session.model, estimated_tokens, 0),
+        estimated_prompt_tokens=prompt_tokens,
+        estimated_completion_tokens=completion_tokens,
+        estimated_cost_usd=model_cost_meta.cost_usd,
         rerouted=decision.action == "reroute",
         actual_prompt_tokens=actual_prompt_tokens if use_actual else None,
         actual_completion_tokens=actual_completion_tokens if use_actual else None,
-        actual_cost_usd=estimated_cost if use_actual else None,
+        actual_cost_usd=model_cost_meta.cost_usd if use_actual else None,
         status="reconciled" if use_actual else "pending",
         actor_type=actor_type,
         actor_id=actor_id,
@@ -100,4 +267,15 @@ def authorize_call(
         reason=decision.reason,
         call_id=call.call_id,
         target_model=decision.target_model,
+        pricing_warning=estimate_meta.warning,
+        pricing_confidence=estimate_meta.pricing_confidence,
+        pricing_source=estimate_meta.pricing_source,
+        model_pricing_known=estimate_meta.model_pricing_known,
+        estimate_source=estimate_source,
+        estimate_prompt_tokens=prompt_tokens,
+        estimate_completion_tokens=completion_tokens,
+        calibration_multiplier=calibration_multiplier,
+        effective_multiplier=effective_multiplier,
+        estimate_reasoning_tokens=estimate_reasoning_tokens,
+        internal_turns_multiplier=internal_turns_multiplier,
     )

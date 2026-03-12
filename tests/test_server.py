@@ -489,3 +489,93 @@ async def test_session_end_twice_is_tool_error(client):
         raise_on_error=False,
     )
     assert result.is_error is True
+
+
+async def test_checkpoint_accepts_dual_token_estimates(client):
+    session = await start_session(client, budget_usd=10.0, model="gpt-4o")
+    result = await client.call_tool(
+        "l6e_authorize_call",
+        {
+            "session_id": session["session_id"],
+            "tool_name": "read_files",
+            "estimated_tokens": 10,
+            "estimated_prompt_tokens": 1200,
+            "estimated_completion_tokens": 600,
+        },
+        raise_on_error=False,
+    )
+    assert not result.is_error
+    assert result.data["estimate_prompt_tokens"] == 1200
+    assert result.data["estimate_completion_tokens"] == 600
+    call = LocalSessionStore().get_call(result.data["call_id"])
+    assert call is not None
+    assert call.estimated_prompt_tokens == 1200
+    assert call.estimated_completion_tokens == 600
+
+
+async def test_unknown_model_pricing_warns_by_default(client):
+    session = await start_session(client, budget_usd=10.0, model="unknown-model-123")
+    result = await client.call_tool(
+        "l6e_authorize_call",
+        {"session_id": session["session_id"], "tool_name": "read_files", "estimated_tokens": 500},
+        raise_on_error=False,
+    )
+    assert not result.is_error
+    assert result.data["model_pricing_known"] is False
+    assert result.data["pricing_confidence"] == "low"
+    assert "pricing_warning" in result.data
+
+
+async def test_unknown_model_pricing_halts_when_policy_requires(client):
+    session = await start_session(
+        client,
+        budget_usd=10.0,
+        model="unknown-model-123",
+        unknown_model_pricing_mode="halt_on_unknown_pricing",
+    )
+    result = await client.call_tool(
+        "l6e_authorize_call",
+        {"session_id": session["session_id"], "tool_name": "read_files", "estimated_tokens": 500},
+        raise_on_error=False,
+    )
+    assert not result.is_error
+    assert result.data["action"] == "halt"
+    assert result.data["reason"] == "unknown_model_pricing:halt"
+
+
+async def test_unknown_model_pricing_reroutes_when_local_model_priced(client, monkeypatch):
+    monkeypatch.setattr(
+        "l6e_mcp.core.authorization.LocalRouter.best_local_model",
+        lambda self: "gpt-4o-mini",
+    )
+    session = await start_session(
+        client,
+        budget_usd=10.0,
+        model="unknown-model-123",
+        unknown_model_pricing_mode="reroute_required",
+    )
+    result = await client.call_tool(
+        "l6e_authorize_call",
+        {"session_id": session["session_id"], "tool_name": "read_files", "estimated_tokens": 500},
+        raise_on_error=False,
+    )
+    assert not result.is_error
+    assert result.data["action"] == "reroute"
+    assert result.data["target_model"] == "gpt-4o-mini"
+
+
+async def test_run_status_returns_pricing_warnings(client):
+    session = await start_session(client, budget_usd=10.0, model="unknown-model-123")
+    await client.call_tool(
+        "l6e_authorize_call",
+        {"session_id": session["session_id"], "tool_name": "read_files", "estimated_tokens": 500},
+        raise_on_error=False,
+    )
+    status = await client.call_tool(
+        "l6e_run_status",
+        {"session_id": session["session_id"]},
+        raise_on_error=False,
+    )
+    assert not status.is_error
+    assert isinstance(status.data["pricing_warnings"], list)
+    assert len(status.data["pricing_warnings"]) == 1

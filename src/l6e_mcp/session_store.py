@@ -18,6 +18,7 @@ from l6e._types import (
     RunSummary,
     StageRoutingHint,
     SubagentSpend,
+    UnknownModelPricingMode,
 )
 
 from l6e_mcp.contracts.exactness import ExactnessState
@@ -266,6 +267,18 @@ class LocalSessionStore:
                 "calls",
                 "exactness_state",
                 "TEXT NOT NULL DEFAULT 'estimate_only'",
+            )
+            _ensure_column(
+                conn,
+                "calls",
+                "estimated_prompt_tokens",
+                "INTEGER NOT NULL DEFAULT 0",
+            )
+            _ensure_column(
+                conn,
+                "calls",
+                "estimated_completion_tokens",
+                "INTEGER NOT NULL DEFAULT 0",
             )
             _ensure_column(conn, "calls", "hosted_ledger_id", "TEXT")
             _ensure_column(conn, "calls", "call_mode", "TEXT")
@@ -860,6 +873,7 @@ def _policy_to_json(policy: PipelinePolicy) -> str:
             "latency_sla": policy.latency_sla,
             "reroute_threshold": policy.reroute_threshold,
             "unknown_model_cost_per_1k_tokens": policy.unknown_model_cost_per_1k_tokens,
+            "unknown_model_pricing_mode": policy.unknown_model_pricing_mode.value,
             "stage_routing": {k: v.value for k, v in policy.stage_routing.items()},
             "stage_overrides": {k: v.value for k, v in policy.stage_overrides.items()},
         },
@@ -880,6 +894,9 @@ def _policy_from_json(raw: str) -> PipelinePolicy:
         reroute_threshold=float(data.get("reroute_threshold", 0.8)),
         unknown_model_cost_per_1k_tokens=float(
             data.get("unknown_model_cost_per_1k_tokens", 0.01)
+        ),
+        unknown_model_pricing_mode=UnknownModelPricingMode(
+            data.get("unknown_model_pricing_mode", "warn_only")
         ),
         stage_routing={
             k: StageRoutingHint(v) for k, v in data.get("stage_routing", {}).items()
