@@ -4,8 +4,8 @@ from __future__ import annotations
 import pytest
 from l6e._types import BudgetMode, PipelinePolicy
 
-from l6e_mcp.store.sessions import SessionRepository
 from l6e_mcp.store.calls import CallRepository
+from l6e_mcp.store.sessions import SessionRepository
 
 
 def _policy() -> PipelinePolicy:
@@ -159,7 +159,7 @@ def test_reconcile_idempotent_same_values(tmp_path):
 def test_latest_pending_call(tmp_path):
     _, calls = _setup(tmp_path)
     sid = "session_cursor_2026-03-12_calltest1"
-    c1 = calls.create(
+    calls.create(
         session_id=sid, tool_name="a", model_requested="gpt-4o", model_used="gpt-4o",
         estimated_prompt_tokens=100, estimated_completion_tokens=50,
         estimated_cost_usd=0.001, rerouted=False,

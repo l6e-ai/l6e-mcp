@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from typing import TYPE_CHECKING
 
 from l6e._types import (
     BudgetMode,
@@ -13,10 +14,13 @@ from l6e._types import (
     UnknownModelPricingMode,
 )
 
-from l6e_mcp.contracts.exactness import ExactnessState
 from l6e_mcp.contracts.mode_coverage import ModeCoverage
 from l6e_mcp.core.exactness import normalize_call_exactness_state
 from l6e_mcp.store import schema as store_schema
+
+if TYPE_CHECKING:
+    from l6e_mcp.store.calls import CallState
+    from l6e_mcp.store.sessions import SessionState
 
 
 def _policy_to_json(policy: PipelinePolicy) -> str:
@@ -75,7 +79,7 @@ def _default_mode_coverage(*, usage_channel: str, accounting_mode: str) -> ModeC
     return ModeCoverage(False, False, False)
 
 
-def _session_from_row(row: sqlite3.Row) -> "SessionState":  # noqa: F821
+def _session_from_row(row: sqlite3.Row) -> SessionState:
     from l6e_mcp.store.sessions import SessionState
 
     return SessionState(
@@ -122,7 +126,7 @@ def _session_from_row(row: sqlite3.Row) -> "SessionState":  # noqa: F821
     )
 
 
-def _call_from_row(row: sqlite3.Row) -> "CallState":  # noqa: F821
+def _call_from_row(row: sqlite3.Row) -> CallState:
     from l6e_mcp.store.calls import CallState
 
     prompt_complexity = (

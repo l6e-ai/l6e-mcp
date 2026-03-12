@@ -8,12 +8,13 @@ from pathlib import Path
 
 from l6e._types import PipelinePolicy, PromptComplexity
 
-# Re-export the public types so existing ``from l6e_mcp.session_store import X`` imports work.
-from l6e_mcp.store.calls import CallState, CallRepository
-from l6e_mcp.store.diagnostics import DiagnosticsRepository
-from l6e_mcp.store.sessions import SessionState, SessionRepository
-from l6e_mcp.store.summary import session_run_summary  # noqa: F401 (re-export)
 from l6e_mcp.store._connection import _db_path
+
+# Re-export the public types so existing ``from l6e_mcp.session_store import X`` imports work.
+from l6e_mcp.store.calls import CallRepository, CallState
+from l6e_mcp.store.diagnostics import DiagnosticsRepository
+from l6e_mcp.store.sessions import SessionRepository, SessionState
+from l6e_mcp.store.summary import session_run_summary  # noqa: F401 (re-export)
 
 __all__ = [
     "LocalSessionStore",
@@ -24,7 +25,8 @@ __all__ = [
 
 
 class LocalSessionStore:
-    """Backward-compatible facade over SessionRepository, CallRepository, and DiagnosticsRepository."""
+    """Backward-compatible facade over SessionRepository, CallRepository, and DiagnosticsRepository.
+    """
 
     def __init__(self, db_path: Path | None = None) -> None:
         path = db_path or _db_path()

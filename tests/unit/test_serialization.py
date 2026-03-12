@@ -5,8 +5,9 @@ import json
 import sqlite3
 
 import pytest
-from l6e._types import BudgetMode, OnBudgetExceeded, PipelinePolicy, PromptComplexity
+from l6e._types import BudgetMode, PipelinePolicy, PromptComplexity
 
+from l6e_mcp.store import schema as store_schema
 from l6e_mcp.store._serialization import (
     _call_from_row,
     _default_mode_coverage,
@@ -14,8 +15,6 @@ from l6e_mcp.store._serialization import (
     _policy_to_json,
     _session_from_row,
 )
-from l6e_mcp.store import schema as store_schema
-
 
 # ---------------------------------------------------------------------------
 # Policy round-trip
@@ -163,7 +162,9 @@ def test_session_from_row_basic():
 
 
 def test_session_from_row_proxy_mode_derived_from_usage_channel():
-    row = _make_session_row({"usage_channel": store_schema.USAGE_CHANNEL_SELF_HOSTED_RELAY, "proxy_mode": 0})
+    row = _make_session_row({
+        "usage_channel": store_schema.USAGE_CHANNEL_SELF_HOSTED_RELAY, "proxy_mode": 0,
+    })
     state = _session_from_row(row)
     assert state.proxy_mode is True
 

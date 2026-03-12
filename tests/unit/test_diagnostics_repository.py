@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import sqlite3
 
-from l6e_mcp.store.sessions import SessionRepository
 from l6e_mcp.store.diagnostics import DiagnosticsRepository
+from l6e_mcp.store.sessions import SessionRepository
 
 
 def _setup(tmp_path):

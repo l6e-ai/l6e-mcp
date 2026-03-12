@@ -3,13 +3,11 @@ from __future__ import annotations
 
 from l6e._types import CallRecord, PipelinePolicy, RunSummary, SubagentSpend
 
-from l6e_mcp.contracts.exactness import ExactnessState
-from l6e_mcp.contracts.mode_coverage import ModeCoverage
+from l6e_mcp.contracts.exactness import ExactnessState, RunExactnessState
 from l6e_mcp.core.exactness import run_exactness_state
 from l6e_mcp.overhead import estimate_overhead
 from l6e_mcp.store.calls import CallState
 from l6e_mcp.store.sessions import SessionState
-from l6e_mcp.contracts.exactness import RunExactnessState
 
 
 def session_run_summary(session: SessionState, calls: list[CallState]) -> RunSummary:

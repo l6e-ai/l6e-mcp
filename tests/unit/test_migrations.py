@@ -3,10 +3,8 @@ from __future__ import annotations
 
 import sqlite3
 
-import pytest
-
 from l6e_mcp.store._connection import make_connection
-from l6e_mcp.store._migrations import init_schema, _ensure_column
+from l6e_mcp.store._migrations import _ensure_column, init_schema
 
 
 def test_make_connection_returns_row_factory(tmp_path):
