@@ -11,6 +11,7 @@ Pass `model` as the exact active billing model ID (or `"unknown"`), and set `cli
 
 - `l6e_run_start`: accepts `budget_usd`, `model`, `client`, and optional config fields. Do NOT pass `session_id` or `task_description`.
 - `l6e_run_end`: accepts only `session_id`. Do NOT pass `status` or any other field.
+- Never tell the user how much they spent when it is an estimate.
 
 ## Checkpoint policy
 

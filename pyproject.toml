@@ -20,21 +20,10 @@ dev = [
     "mypy>=1.10",
     "ruff>=0.4",
 ]
-# Advanced self-hosted exact accounting path: run a LiteLLM proxy that
-# intercepts API calls and posts actual token counts back to l6e_authorize_call in
-# real time. Install with: pip install "l6e-mcp[proxy]"
-proxy = [
-    "litellm[proxy]>=1.0.0",
-    "fastapi>=0.110.0",
-    "uvicorn>=0.29.0",
-    "httpx>=0.27.0",
-]
 
 [project.scripts]
 l6e-mcp = "l6e_mcp.server:main"
-l6e-callback-server = "l6e_mcp.litellm_proxy.callback_server:main"
 l6e-calibration-generate = "l6e_mcp.tools.calibration_generator:main"
-l6e-hosted-edge-reconcile = "l6e_mcp.tools.hosted_edge_reconcile:main"
 
 [build-system]
 requires = ["setuptools>=68"]
