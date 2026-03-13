@@ -214,6 +214,47 @@ def test_create_call_unknown_session_raises(tmp_path):
         )
 
 
+def test_concurrent_calls_get_distinct_call_indexes(tmp_path):
+    """Two concurrent call creations for the same session must get distinct
+    call_index values. Tests the atomic UPDATE ... RETURNING path."""
+    import threading
+
+    db = tmp_path / "sessions.db"
+    sessions = SessionRepository(db)
+    sessions.create(
+        session_id="session_cursor_2026-03-12_concurrent1",
+        model="gpt-4o",
+        policy=_policy(),
+        source="mcp",
+        log_path=None,
+    )
+    calls = CallRepository(db)
+    sid = "session_cursor_2026-03-12_concurrent1"
+    results: list = []
+
+    def make_call():
+        c = calls.create(
+            session_id=sid,
+            tool_name="search",
+            model_requested="gpt-4o",
+            model_used="gpt-4o",
+            estimated_prompt_tokens=100,
+            estimated_completion_tokens=50,
+            estimated_cost_usd=0.001,
+            rerouted=False,
+        )
+        results.append(c.call_index)
+
+    threads = [threading.Thread(target=make_call) for _ in range(5)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert len(results) == 5
+    assert len(set(results)) == 5, f"Duplicate call_indexes: {sorted(results)}"
+
+
 def test_reconcile_on_finalized_session_raises(tmp_path):
     sessions, calls = _setup(tmp_path)
     call = calls.create(
@@ -236,7 +277,9 @@ def test_reconcile_on_finalized_session_raises(tmp_path):
         )
 
 
-def test_reconcile_rereconcile_with_different_values_updates(tmp_path):
+def test_reconcile_rereconcile_with_different_values_raises(tmp_path):
+    """Re-reconciling an already-reconciled call with different token values
+    must raise KeyError rather than silently overwriting the stored data."""
     _, calls = _setup(tmp_path)
     call = calls.create(
         session_id="session_cursor_2026-03-12_calltest1",
@@ -254,13 +297,15 @@ def test_reconcile_rereconcile_with_different_values_updates(tmp_path):
         actual_completion_tokens=150,
         actual_cost_usd=0.008,
     )
-    # Re-reconcile with different values — should update (not idempotent path)
-    r2 = calls.reconcile(
-        call_id=call.call_id,
-        actual_prompt_tokens=450,
-        actual_completion_tokens=175,
-        actual_cost_usd=0.009,
-    )
-    assert r2.actual_prompt_tokens == 450
-    assert r2.actual_completion_tokens == 175
-    assert r2.actual_cost_usd == pytest.approx(0.009)
+    with pytest.raises(KeyError, match="already reconciled"):
+        calls.reconcile(
+            call_id=call.call_id,
+            actual_prompt_tokens=450,
+            actual_completion_tokens=175,
+            actual_cost_usd=0.009,
+        )
+    # Original values must be preserved
+    stored = calls.get(call.call_id)
+    assert stored is not None
+    assert stored.actual_prompt_tokens == 400
+    assert stored.actual_completion_tokens == 150

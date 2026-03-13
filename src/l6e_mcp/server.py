@@ -1,7 +1,6 @@
 """l6e-mcp server — session-scoped budget enforcement via FastMCP."""
 from __future__ import annotations
 
-import dataclasses
 import json
 import os
 import secrets
@@ -20,7 +19,6 @@ from l6e.store import InMemoryRunStore
 
 from l6e_mcp.contracts.correlation_envelope import CorrelationEnvelope
 from l6e_mcp.contracts.exactness import ExactnessState
-from l6e_mcp.contracts.mode_coverage import ModeCoverage
 from l6e_mcp.contracts.usage_report import UsageReport
 from l6e_mcp.core.authorization import authorize_call
 from l6e_mcp.core.exactness import run_exactness_state
@@ -42,9 +40,6 @@ mcp = FastMCP(
         "always honor the decision before proceeding."
     ),
 )
-
-# Retained only for backward-compatibility in tests; persisted state is authoritative.
-_sessions: dict[str, tuple] = {}
 
 _ACTIVE_SESSION_FILE = Path.home() / ".l6e" / "active_session"
 _ACTIVE_CALL_FILE = Path.home() / ".l6e" / "active_call"
@@ -266,26 +261,8 @@ def l6e_run_start(
         _ACTIVE_SESSION_FILE.parent.mkdir(parents=True, exist_ok=True)
         _ACTIVE_SESSION_FILE.write_text(session_id, encoding="utf-8")
 
-    effective_accounting_mode = accounting_mode or (
-        "exact_optional" if proxy_mode else "estimate_only"
-    )
-    result = {
-        "session_id": session_id,
-        "budget_usd": budget_usd,
-        "model": model,
-        "accounting_mode": effective_accounting_mode,
-        "usage_channel": usage_channel or ("self_hosted_relay" if proxy_mode else "none"),
-        "advanced_fallback_enabled": advanced_fallback,
-        "fallback_correlation_capability": "active_file" if advanced_fallback else "metadata_only",
-        "unknown_model_pricing_mode": policy.unknown_model_pricing_mode.value,
-    }
-    if effective_accounting_mode == "estimate_only":
-        result["savings_note"] = (
-            "overhead tracking is active but net_savings_usd requires exact accounting "
-            "(hosted-edge or self-hosted proxy). savings_confidence will be estimate_only."
-        )
+    result: dict = {"session_id": session_id}
     if proxy_mode and advanced_fallback:
-        result["proxy_mode"] = True
         result["active_session_file"] = str(_ACTIVE_SESSION_FILE)
         result["active_call_file"] = str(_ACTIVE_CALL_FILE)
     return result
@@ -295,7 +272,7 @@ def l6e_run_start(
 def l6e_authorize_call(
     session_id: Annotated[str, "Session ID from l6e_run_start"],
     tool_name: Annotated[str, "Name of the tool or stage about to run — pass the stage label here (e.g. 'planning', 'implement'). This is NOT a 'stage' parameter; the field is called tool_name."],  # noqa: E501 — Annotated string is the MCP parameter description shown verbatim to agents; must be unambiguous
-    estimated_tokens: Annotated[int, "Estimated prompt token count for this call"] = 500,
+    estimated_tokens: Annotated[int, "Estimated prompt token count for this call"] = 2000,
     estimated_prompt_tokens: Annotated[
         int | None,
         "Optional explicit prompt token estimate.",
@@ -370,45 +347,24 @@ def l6e_authorize_call(
     snapshot = _spend_snapshot(session)
     result = {
         "action": decision.action,
-        "spend_so_far_usd": snapshot["spent_usd"],
         "remaining_usd": snapshot["remaining_usd"],
         "budget_pressure": snapshot["budget_pressure"],
         "reason": decision.reason,
     }
     if decision.pricing_warning is not None:
         result["pricing_warning"] = decision.pricing_warning
-    if decision.pricing_confidence is not None:
-        result["pricing_confidence"] = decision.pricing_confidence
-    if decision.pricing_source is not None:
-        result["pricing_source"] = decision.pricing_source
-    if decision.model_pricing_known is not None:
-        result["model_pricing_known"] = decision.model_pricing_known
-    if decision.estimate_source is not None:
-        result["estimate_source"] = decision.estimate_source
-    if decision.estimate_prompt_tokens is not None:
-        result["estimate_prompt_tokens"] = decision.estimate_prompt_tokens
-    if decision.estimate_completion_tokens is not None:
-        result["estimate_completion_tokens"] = decision.estimate_completion_tokens
-    if decision.calibration_multiplier is not None:
-        result["calibration_multiplier"] = decision.calibration_multiplier
-    if decision.effective_multiplier is not None:
-        result["effective_multiplier"] = decision.effective_multiplier
-    if decision.estimate_reasoning_tokens is not None:
-        result["estimate_reasoning_tokens"] = decision.estimate_reasoning_tokens
-    if decision.internal_turns_multiplier is not None:
-        result["internal_turns_multiplier"] = decision.internal_turns_multiplier
-    result["pricing_warnings"] = [w for w in (decision.pricing_warning,) if w is not None]
     if call_id is not None:
         result["call_id"] = call_id
-        result["correlation"] = _correlation_envelope(
-            session_id,
-            call_id,
-            tool_name,
-            actor_type=actor_type,
-            actor_id=actor_id,
-            actor_name=actor_name,
-            parent_call_id=parent_call_id,
-        )
+        if session.proxy_mode:
+            result["correlation"] = _correlation_envelope(
+                session_id,
+                call_id,
+                tool_name,
+                actor_type=actor_type,
+                actor_id=actor_id,
+                actor_name=actor_name,
+                parent_call_id=parent_call_id,
+            )
     if decision.action == "reroute" and decision.target_model is not None:
         result["target_model"] = decision.target_model
     return result
@@ -494,12 +450,30 @@ def l6e_record_usage(
 @mcp.tool
 def l6e_run_status(
     session_id: Annotated[str, "Session ID from l6e_run_start"],
+    estimated_prompt_tokens: Annotated[
+        int | None,
+        "Estimated prompt tokens for the next stage. Providing this forces a cost-aware "
+        "assessment before you proceed — omitting it reduces budget accuracy.",
+    ] = None,
+    estimated_completion_tokens: Annotated[
+        int | None,
+        "Estimated completion tokens for the next stage. Provide alongside "
+        "estimated_prompt_tokens for best-effort spend projection.",
+    ] = None,
 ) -> dict:
-    """Read-only spend snapshot. No call recorded, no gate action. Use within a stage to monitor budget pressure without burning a checkpoint."""  # noqa: E501 — MCP tool docstring surfaces verbatim to agents; truncating it degrades guidance quality
+    """Read-only spend snapshot. No call recorded, no gate action. Use within a stage to monitor budget pressure without burning a checkpoint. Pass estimated_prompt_tokens and estimated_completion_tokens for the next stage to force a cost-aware assessment."""  # noqa: E501 — MCP tool docstring surfaces verbatim to agents; truncating it degrades guidance quality
     store = _get_session_store()
-    store.increment_status_calls(session_id)
+    try:
+        store.increment_status_calls(session_id)
+    except KeyError as exc:
+        raise ToolError(exc.args[0]) from exc
     session = _require_session(session_id)
-    return _spend_snapshot(session)
+    snapshot = _spend_snapshot(session)
+    return {
+        "budget_pressure": snapshot["budget_pressure"],
+        "remaining_usd": snapshot["remaining_usd"],
+        "pct_used": snapshot["pct_used"],
+    }
 
 
 @mcp.tool
@@ -521,104 +495,47 @@ def l6e_run_end(
         if session.log_path is not None
         else LocalRunLog()
     )
-    log.append(summary)
     try:
         store.finalize_session(session_id)
     except KeyError as exc:
         raise ToolError(exc.args[0]) from exc
+    log.append(summary)
     if session.advanced_fallback_enabled:
         _clear_active_session_file(session_id)
         _clear_active_call_file(session_id)
 
-    estimator = LiteLLMCostEstimator(
-        fallback_cost_per_1k_tokens=session.policy.unknown_model_cost_per_1k_tokens
-    )
-    call_exactness = [ExactnessState(call.exactness_state) for call in calls]
-    run_exactness = run_exactness_state(call_exactness)
+    call_exactness_states = [ExactnessState(c.exactness_state) for c in calls]
+    run_exactness = run_exactness_state(call_exactness_states)
     pending_exact_calls = sum(
-        1 for state in call_exactness if state == ExactnessState.EXACT_PENDING
+        1 for c in calls if c.exactness_state == ExactnessState.EXACT_PENDING
     )
-    unavailable_exact_calls = sum(
-        1 for state in call_exactness if state == ExactnessState.EXACT_UNAVAILABLE
-    )
-    last_reconciled = max(
-        (call.reconciled_at for call in calls if call.reconciled_at),
-        default=None,
-    )
-    exactness_breakdown = {
-        ExactnessState.ESTIMATE_ONLY.value: sum(
-            1 for state in call_exactness if state == ExactnessState.ESTIMATE_ONLY
-        ),
-        ExactnessState.EXACT_PENDING.value: pending_exact_calls,
-        ExactnessState.EXACT_RECORDED.value: sum(
-            1 for state in call_exactness if state == ExactnessState.EXACT_RECORDED
-        ),
-        ExactnessState.EXACT_UNAVAILABLE.value: unavailable_exact_calls,
+    reconciled_times = [c.reconciled_at for c in calls if c.reconciled_at is not None]
+    last_reconciled_at = max(reconciled_times) if reconciled_times else None
+    mode_coverage = {
+        "ask_mode_exact_capable": session.ask_mode_exact_capable,
+        "plan_mode_exact_capable": session.plan_mode_exact_capable,
+        "agent_mode_exact_capable": session.agent_mode_exact_capable,
     }
-    mode_coverage = ModeCoverage(
-        ask_mode_exact_capable=session.ask_mode_exact_capable,
-        plan_mode_exact_capable=session.plan_mode_exact_capable,
-        agent_mode_exact_capable=session.agent_mode_exact_capable,
-    )
-    coverage_gaps: list[str] = []
-    if not mode_coverage.ask_mode_exact_capable:
-        coverage_gaps.append("ask")
-    if not mode_coverage.plan_mode_exact_capable:
-        coverage_gaps.append("plan")
-    if not mode_coverage.agent_mode_exact_capable:
-        coverage_gaps.append("agent")
-    pricing_warnings: list[dict[str, str]] = []
-    warned_models: set[str] = set()
-    for call in calls:
-        model = call.model_used
-        if model in warned_models:
-            continue
-        meta = estimator.estimate_with_metadata(
-            model=model,
-            prompt_tokens=max(1, call.estimated_prompt_tokens),
-            completion_tokens=max(0, call.estimated_completion_tokens),
-            emit_warning=False,
-        )
-        if meta.model_pricing_known:
-            continue
-        warned_models.add(model)
-        pricing_warnings.append(
-            {
-                "model": model,
-                "pricing_source": meta.pricing_source,
-                "pricing_confidence": meta.pricing_confidence,
-                "warning": meta.warning or "unknown model pricing",
-            }
-        )
-
-    result = {
+    mode_coverage_gaps = [
+        mode
+        for mode, capable in [
+            ("ask", session.ask_mode_exact_capable),
+            ("plan", session.plan_mode_exact_capable),
+            ("agent", session.agent_mode_exact_capable),
+        ]
+        if not capable
+    ]
+    return {
         "session_id": session_id,
         "total_cost_usd": round(summary.total_cost, 6),
         "calls_made": summary.calls_made,
-        "reroutes": summary.reroutes,
-        "savings_usd": round(summary.savings_usd, 6),
-        "overhead_usd": round(summary.overhead_usd, 6),
-        "overhead_calls": summary.overhead_calls,
         "savings_confidence": summary.savings_confidence,
-        "subagent_calls": summary.subagent_calls,
-        "subagent_spend_usd": round(summary.subagent_spend_usd, 6),
-        "subagents": [dataclasses.asdict(subagent) for subagent in summary.subagents],
-        "exactness_state": run_exactness.value,
-        "exactness_breakdown": exactness_breakdown,
         "pending_exact_calls": pending_exact_calls,
-        "unavailable_exact_calls": unavailable_exact_calls,
-        "last_reconciled_at": round(last_reconciled, 6) if last_reconciled is not None else None,
-        "exact_calls": sum(1 for state in call_exactness if state.value == "exact_recorded"),
-        "mode_coverage": mode_coverage.as_dict(),
-        "mode_coverage_gaps": coverage_gaps,
-        "pricing_warnings": pricing_warnings,
-        "source": summary.source,
+        "exactness_state": run_exactness.value,
+        "last_reconciled_at": last_reconciled_at,
+        "mode_coverage": mode_coverage,
+        "mode_coverage_gaps": mode_coverage_gaps,
     }
-    if summary.savings_confidence == "exact":
-        result["net_savings_usd"] = round(summary.net_savings_usd, 6)
-    else:
-        result["net_savings_unavailable"] = True
-    return result
 
 
 def main() -> None:

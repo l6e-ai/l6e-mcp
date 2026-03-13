@@ -253,7 +253,7 @@ def authorize_call(
         estimated_prompt_tokens=prompt_tokens if prompt_tokens is not None else 0,
         estimated_completion_tokens=completion_tokens if completion_tokens is not None else 0,
         estimated_cost_usd=model_cost_meta.cost_usd,
-        rerouted=decision.action == "reroute",
+        rerouted=response_action == "reroute",
         actual_prompt_tokens=actual_prompt_tokens if use_actual else None,
         actual_completion_tokens=actual_completion_tokens if use_actual else None,
         actual_cost_usd=model_cost_meta.cost_usd if use_actual else None,

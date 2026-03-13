@@ -123,38 +123,47 @@ class CallRepository:
         effective_correlation_key = correlation_key or call_id
         effective_correlation_source = correlation_source or "checkpoint_call_id"
         with make_connection(self._path) as conn:
-            row = conn.execute(
+            # Atomically claim the next call index with a single UPDATE...RETURNING
+            # statement. This prevents a TOCTOU race where two concurrent connections
+            # both SELECT the same next_call_index before either writes.
+            index_row = conn.execute(
                 """
-                SELECT state, next_call_index, accounting_mode,
-                       ask_mode_exact_capable, plan_mode_exact_capable, agent_mode_exact_capable
-                FROM sessions
-                WHERE session_id = ?
+                UPDATE sessions
+                SET next_call_index = next_call_index + 1
+                WHERE session_id = ? AND state != 'finalized'
+                RETURNING next_call_index - 1,
+                          state,
+                          accounting_mode,
+                          ask_mode_exact_capable,
+                          plan_mode_exact_capable,
+                          agent_mode_exact_capable
                 """,
                 (session_id,),
             ).fetchone()
-            if row is None:
-                raise KeyError(f"Unknown session '{session_id}'. Call l6e_run_start first.")
-            if row["state"] == "finalized":
+            if index_row is None:
+                # Either the session doesn't exist or it's finalized — distinguish them.
+                check = conn.execute(
+                    "SELECT state FROM sessions WHERE session_id = ?",
+                    (session_id,),
+                ).fetchone()
+                if check is None:
+                    raise KeyError(f"Unknown session '{session_id}'. Call l6e_run_start first.")
                 raise KeyError(
                     f"Unknown session '{session_id}'. Already ended or never started."
                 )
-            call_index = int(row["next_call_index"])
+            call_index = int(index_row[0])
             coverage = ModeCoverage(
-                ask_mode_exact_capable=bool(row["ask_mode_exact_capable"]),
-                plan_mode_exact_capable=bool(row["plan_mode_exact_capable"]),
-                agent_mode_exact_capable=bool(row["agent_mode_exact_capable"]),
+                ask_mode_exact_capable=bool(index_row["ask_mode_exact_capable"]),
+                plan_mode_exact_capable=bool(index_row["plan_mode_exact_capable"]),
+                agent_mode_exact_capable=bool(index_row["agent_mode_exact_capable"]),
             )
             mode_exact_capable = mode_exact_capable_for_call_mode(coverage, call_mode)
             resolved_exactness_state = normalize_call_exactness_state(
                 exactness_state,
                 status=status,
-                accounting_mode=str(row["accounting_mode"]),
+                accounting_mode=str(index_row["accounting_mode"]),
                 mode_exact_capable=mode_exact_capable,
             ).value
-            conn.execute(
-                "UPDATE sessions SET next_call_index = ? WHERE session_id = ?",
-                (call_index + 1, session_id),
-            )
             conn.execute(
                 """
                 INSERT INTO calls (
@@ -308,6 +317,10 @@ class CallRepository:
                     if call is None:
                         raise RuntimeError(f"Failed to reload reconciled call '{call_id}'")
                     return call
+                raise KeyError(
+                    f"Call '{call_id}' is already reconciled with different values. "
+                    "Re-reconciliation with different token counts is not allowed."
+                )
             if model_used is None:
                 conn.execute(
                     """

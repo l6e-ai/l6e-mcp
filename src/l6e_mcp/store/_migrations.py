@@ -5,7 +5,6 @@ import sqlite3
 
 
 def init_schema(conn: sqlite3.Connection) -> None:
-    conn.execute("PRAGMA journal_mode=WAL")
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS sessions (

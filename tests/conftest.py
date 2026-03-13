@@ -15,13 +15,11 @@ def reset_sessions(tmp_path, monkeypatch):
     The autouse=True ensures every test starts with isolated SQLite state,
     active session files, and a writable log path.
     """
-    srv._sessions.clear()
     monkeypatch.setenv("L6E_LOG_PATH", str(tmp_path / "runs.jsonl"))
     monkeypatch.setenv("L6E_SESSION_DB_PATH", str(tmp_path / "sessions.db"))
     monkeypatch.setattr(srv, "_ACTIVE_SESSION_FILE", tmp_path / "active_session")
     monkeypatch.setattr(srv, "_ACTIVE_CALL_FILE", tmp_path / "active_call")
     yield
-    srv._sessions.clear()
 
 
 @pytest.fixture
