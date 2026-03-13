@@ -13,7 +13,7 @@ const config: Config = {
     v4: true,
   },
 
-  url: 'https://mcp.l6e.ai',
+  url: 'https://docs.l6e.ai',
   baseUrl: '/',
 
   organizationName: 'l6e-ai',
@@ -45,6 +45,21 @@ const config: Config = {
   ],
 
   plugins: [],
+
+  headTags: [
+    {
+      tagName: 'script',
+      attributes: {
+        async: 'true',
+        src: 'https://plausible.io/js/pa-JxLY7JISL-gLabtTgnRNt.js',
+      },
+    },
+    {
+      tagName: 'script',
+      attributes: {},
+      innerHTML: 'window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}};plausible.init()',
+    },
+  ],
 
   themeConfig: {
     image: 'img/l6e-mcp-social-card.jpg',
