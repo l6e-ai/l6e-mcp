@@ -16,7 +16,7 @@ def test_session_store_reconciles_existing_call(tmp_path):
         policy=policy,
         source="mcp",
         log_path=str(tmp_path / "runs.jsonl"),
-        proxy_mode=True,
+        usage_channel="self_hosted_relay",
     )
 
     call = store.create_call(
@@ -64,7 +64,7 @@ def test_session_store_shares_state_across_instances(tmp_path):
         policy=policy,
         source="mcp",
         log_path=str(tmp_path / "runs.jsonl"),
-        proxy_mode=True,
+        usage_channel="self_hosted_relay",
     )
     call = writer.create_call(
         session_id=session.session_id,
@@ -100,7 +100,7 @@ def test_session_store_persists_callback_correlation_fields(tmp_path):
         policy=policy,
         source="mcp",
         log_path=str(tmp_path / "runs.jsonl"),
-        proxy_mode=True,
+        usage_channel="self_hosted_relay",
     )
     call = store.create_call(
         session_id=session.session_id,
@@ -138,7 +138,7 @@ def test_session_store_persists_subagent_metadata_and_rolls_up_summary(tmp_path)
         policy=policy,
         source="mcp",
         log_path=str(tmp_path / "runs.jsonl"),
-        proxy_mode=True,
+        usage_channel="self_hosted_relay",
     )
     store.create_call(
         session_id=session.session_id,
@@ -224,7 +224,7 @@ def test_session_store_normalizes_unknown_exactness_state(tmp_path):
         policy=policy,
         source="mcp",
         log_path=str(tmp_path / "runs.jsonl"),
-        proxy_mode=True,
+        usage_channel="self_hosted_relay",
     )
     call = store.create_call(
         session_id=session.session_id,

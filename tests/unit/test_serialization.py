@@ -110,8 +110,8 @@ def _make_session_row(overrides: dict | None = None) -> sqlite3.Row:
         """
         CREATE TABLE sessions (
             session_id TEXT, model TEXT, policy_json TEXT, source TEXT, log_path TEXT,
-            proxy_mode INTEGER, accounting_mode TEXT, usage_channel TEXT,
-            advanced_fallback_enabled INTEGER, ask_mode_exact_capable INTEGER,
+            accounting_mode TEXT, usage_channel TEXT,
+            ask_mode_exact_capable INTEGER,
             plan_mode_exact_capable INTEGER, agent_mode_exact_capable INTEGER,
             state TEXT, next_call_index INTEGER, checkpoint_calls INTEGER,
             status_calls INTEGER, created_at REAL, ended_at REAL, finalized_at REAL
@@ -124,10 +124,8 @@ def _make_session_row(overrides: dict | None = None) -> sqlite3.Row:
         policy_json=_policy_to_json(_basic_policy()),
         source="mcp",
         log_path=None,
-        proxy_mode=0,
         accounting_mode=store_schema.ACCOUNTING_MODE_ESTIMATE_ONLY,
         usage_channel=store_schema.USAGE_CHANNEL_NONE,
-        advanced_fallback_enabled=0,
         ask_mode_exact_capable=0,
         plan_mode_exact_capable=0,
         agent_mode_exact_capable=0,
@@ -142,7 +140,7 @@ def _make_session_row(overrides: dict | None = None) -> sqlite3.Row:
     if overrides:
         defaults.update(overrides)
     conn.execute(
-        "INSERT INTO sessions VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO sessions VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         list(defaults.values()),
     )
     return conn.execute("SELECT * FROM sessions").fetchone()
@@ -159,20 +157,6 @@ def test_session_from_row_basic():
     assert state.status_calls == 0
     assert state.ended_at is None
     assert state.finalized_at is None
-
-
-def test_session_from_row_proxy_mode_derived_from_usage_channel():
-    row = _make_session_row({
-        "usage_channel": store_schema.USAGE_CHANNEL_SELF_HOSTED_RELAY, "proxy_mode": 0,
-    })
-    state = _session_from_row(row)
-    assert state.proxy_mode is True
-
-
-def test_session_from_row_advanced_fallback():
-    row = _make_session_row({"advanced_fallback_enabled": 1})
-    state = _session_from_row(row)
-    assert state.advanced_fallback_enabled is True
 
 
 def _make_call_row(overrides: dict | None = None) -> sqlite3.Row:

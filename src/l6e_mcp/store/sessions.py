@@ -33,15 +33,9 @@ class SessionState:
     finalized_at: float | None
     checkpoint_calls: int
     status_calls: int
-    advanced_fallback_enabled: bool
     ask_mode_exact_capable: bool
     plan_mode_exact_capable: bool
     agent_mode_exact_capable: bool
-
-    @property
-    def proxy_mode(self) -> bool:
-        """Backward-compatible projection for legacy proxy-mode behavior."""
-        return self.usage_channel == store_schema.USAGE_CHANNEL_SELF_HOSTED_RELAY
 
 
 class SessionRepository:
@@ -61,24 +55,18 @@ class SessionRepository:
         policy: PipelinePolicy,
         source: str,
         log_path: str | None,
-        proxy_mode: bool = False,
         accounting_mode: str | None = None,
         usage_channel: str | None = None,
-        advanced_fallback_enabled: bool = False,
         ask_mode_exact_capable: bool | None = None,
         plan_mode_exact_capable: bool | None = None,
         agent_mode_exact_capable: bool | None = None,
     ) -> SessionState:
         created_at = time.time()
+        effective_usage_channel = usage_channel or store_schema.USAGE_CHANNEL_NONE
         effective_accounting_mode = accounting_mode or (
             store_schema.ACCOUNTING_MODE_EXACT_OPTIONAL
-            if proxy_mode
+            if effective_usage_channel == store_schema.USAGE_CHANNEL_SELF_HOSTED_RELAY
             else store_schema.ACCOUNTING_MODE_ESTIMATE_ONLY
-        )
-        effective_usage_channel = usage_channel or (
-            store_schema.USAGE_CHANNEL_SELF_HOSTED_RELAY
-            if proxy_mode
-            else store_schema.USAGE_CHANNEL_NONE
         )
         default_coverage = _default_mode_coverage(
             usage_channel=effective_usage_channel,
@@ -103,12 +91,12 @@ class SessionRepository:
             conn.execute(
                 """
                 INSERT INTO sessions (
-                    session_id, model, policy_json, source, log_path, proxy_mode,
-                    accounting_mode, usage_channel, advanced_fallback_enabled,
+                    session_id, model, policy_json, source, log_path,
+                    accounting_mode, usage_channel,
                     ask_mode_exact_capable, plan_mode_exact_capable, agent_mode_exact_capable,
                     state, next_call_index, checkpoint_calls, status_calls,
                     created_at, ended_at, finalized_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, 0, 0, ?, NULL, NULL)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, 0, 0, ?, NULL, NULL)
                 """,
                 (
                     session_id,
@@ -116,10 +104,8 @@ class SessionRepository:
                     _policy_to_json(policy),
                     source,
                     log_path,
-                    int(proxy_mode),
                     effective_accounting_mode,
                     effective_usage_channel,
-                    int(advanced_fallback_enabled),
                     int(resolved_ask),
                     int(resolved_plan),
                     int(resolved_agent),

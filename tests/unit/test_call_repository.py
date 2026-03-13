@@ -21,7 +21,6 @@ def _setup(tmp_path):
         policy=_policy(),
         source="mcp",
         log_path=None,
-        proxy_mode=True,
     )
     calls = CallRepository(db)
     return sessions, calls

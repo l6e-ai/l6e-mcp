@@ -1,7 +1,6 @@
 """l6e-mcp server — session-scoped budget enforcement via FastMCP."""
 from __future__ import annotations
 
-import json
 import os
 import secrets
 from datetime import date
@@ -12,12 +11,7 @@ from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 from l6e._log import LocalRunLog
 from l6e._types import BudgetMode, PipelinePolicy, UnknownModelPricingMode
-from l6e.costs import LiteLLMCostEstimator
-from l6e.gate import ConstraintGate
-from l6e.router import LocalRouter
-from l6e.store import InMemoryRunStore
 
-from l6e_mcp.contracts.correlation_envelope import CorrelationEnvelope
 from l6e_mcp.contracts.exactness import ExactnessState
 from l6e_mcp.contracts.usage_report import UsageReport
 from l6e_mcp.core.authorization import authorize_call
@@ -41,9 +35,6 @@ mcp = FastMCP(
     ),
 )
 
-_ACTIVE_SESSION_FILE = Path.home() / ".l6e" / "active_session"
-_ACTIVE_CALL_FILE = Path.home() / ".l6e" / "active_call"
-
 
 def _make_session_id(client: str = "unknown") -> str:
     token = secrets.token_hex(4)
@@ -64,22 +55,6 @@ def _require_session(session_id: str) -> SessionState:
         return _get_session_store().require_active_session(session_id)
     except KeyError as exc:
         raise ToolError(exc.args[0]) from exc
-
-
-def _runtime(session: SessionState):
-    estimator = LiteLLMCostEstimator(
-        fallback_cost_per_1k_tokens=session.policy.unknown_model_cost_per_1k_tokens
-    )
-    store = InMemoryRunStore(
-        run_id=session.session_id,
-        policy=session.policy,
-        estimator=estimator,
-        source=session.source,
-    )
-    for call in _get_session_store().list_calls_for_session(session.session_id):
-        store.record_call(call.effective_record())
-    gate = ConstraintGate(policy=session.policy, router=LocalRouter())
-    return estimator, gate, store
 
 
 def _budget_pressure(pct_used: float) -> str:
@@ -110,80 +85,6 @@ def _spend_snapshot(session: SessionState) -> dict:
     }
 
 
-def _write_active_call(session_id: str, call_id: str) -> None:
-    _ACTIVE_CALL_FILE.parent.mkdir(parents=True, exist_ok=True)
-    _ACTIVE_CALL_FILE.write_text(
-        json.dumps({"session_id": session_id, "call_id": call_id}),
-        encoding="utf-8",
-    )
-
-
-def _correlation_envelope(
-    session_id: str,
-    call_id: str,
-    tool_name: str,
-    *,
-    actor_type: str = "parent_agent",
-    actor_id: str | None = None,
-    actor_name: str | None = None,
-    parent_call_id: str | None = None,
-) -> dict:
-    spend_logs_metadata = {
-        "l6e_call_id": call_id,
-        "l6e_session_id": session_id,
-        "l6e_tool_name": tool_name,
-        "l6e_actor_type": actor_type,
-    }
-    request_tags = [
-        f"l6e_call_id:{call_id}",
-        f"l6e_session_id:{session_id}",
-        f"l6e_tool_name:{tool_name}",
-        f"l6e_actor_type:{actor_type}",
-    ]
-    if actor_id is not None:
-        spend_logs_metadata["l6e_actor_id"] = actor_id
-        request_tags.append(f"l6e_actor_id:{actor_id}")
-    if actor_name is not None:
-        spend_logs_metadata["l6e_actor_name"] = actor_name
-        request_tags.append(f"l6e_actor_name:{actor_name}")
-    if parent_call_id is not None:
-        spend_logs_metadata["l6e_parent_call_id"] = parent_call_id
-        request_tags.append(f"l6e_parent_call_id:{parent_call_id}")
-    return CorrelationEnvelope(
-        call_id=call_id,
-        metadata={"spend_logs_metadata": spend_logs_metadata},
-        request_tags=request_tags,
-    ).as_dict()
-
-
-def _clear_active_session_file(session_id: str) -> None:
-    try:
-        if (
-            _ACTIVE_SESSION_FILE.exists()
-            and _ACTIVE_SESSION_FILE.read_text(encoding="utf-8").strip() == session_id
-        ):
-            _ACTIVE_SESSION_FILE.unlink()
-    except OSError:
-        pass
-
-
-def _clear_active_call_file(session_id: str) -> None:
-    try:
-        if not _ACTIVE_CALL_FILE.exists():
-            return
-        raw = _ACTIVE_CALL_FILE.read_text(encoding="utf-8").strip()
-        if not raw:
-            return
-        try:
-            payload = json.loads(raw)
-        except json.JSONDecodeError:
-            return
-        if payload.get("session_id") == session_id:
-            _ACTIVE_CALL_FILE.unlink()
-    except OSError:
-        pass
-
-
 @mcp.tool
 def l6e_run_start(
     budget_usd: Annotated[float, "Hard budget ceiling in USD for this session"],
@@ -192,15 +93,6 @@ def l6e_run_start(
         str,
         "MCP client name for session_id labelling — e.g. cursor, claude-code, windsurf",
     ] = "unknown",
-    proxy_mode: Annotated[
-        bool,
-        "When True, enables self-hosted relay reconciliation paths. "
-        "Legacy active-file fallback is controlled by advanced_fallback. Default: False.",
-    ] = False,
-    advanced_fallback: Annotated[
-        bool,
-        "Enable legacy active_session/active_call fallback handshake. Default: False.",
-    ] = False,
     accounting_mode: Annotated[
         str | None,
         "Optional accounting mode: estimate_only, exact_optional, or exact_required.",
@@ -248,24 +140,13 @@ def l6e_run_start(
         policy=policy,
         source="mcp",
         log_path=str(log_path) if log_path is not None else None,
-        proxy_mode=proxy_mode,
         accounting_mode=accounting_mode,
         usage_channel=usage_channel,
-        advanced_fallback_enabled=advanced_fallback,
         ask_mode_exact_capable=ask_mode_exact_capable,
         plan_mode_exact_capable=plan_mode_exact_capable,
         agent_mode_exact_capable=agent_mode_exact_capable,
     )
-
-    if proxy_mode and advanced_fallback:
-        _ACTIVE_SESSION_FILE.parent.mkdir(parents=True, exist_ok=True)
-        _ACTIVE_SESSION_FILE.write_text(session_id, encoding="utf-8")
-
-    result: dict = {"session_id": session_id}
-    if proxy_mode and advanced_fallback:
-        result["active_session_file"] = str(_ACTIVE_SESSION_FILE)
-        result["active_call_file"] = str(_ACTIVE_CALL_FILE)
-    return result
+    return {"session_id": session_id}
 
 
 @mcp.tool
@@ -332,17 +213,6 @@ def l6e_authorize_call(
         actual_completion_tokens=actual_completion_tokens,
     )
     store.increment_checkpoint_calls(session_id)
-    call_id = decision.call_id
-    use_actual = (
-        actual_prompt_tokens is not None and actual_completion_tokens is not None
-    )
-    if (
-        call_id is not None
-        and session.proxy_mode
-        and session.advanced_fallback_enabled
-        and not use_actual
-    ):
-        _write_active_call(session_id, call_id)
 
     snapshot = _spend_snapshot(session)
     result = {
@@ -353,18 +223,8 @@ def l6e_authorize_call(
     }
     if decision.pricing_warning is not None:
         result["pricing_warning"] = decision.pricing_warning
-    if call_id is not None:
-        result["call_id"] = call_id
-        if session.proxy_mode:
-            result["correlation"] = _correlation_envelope(
-                session_id,
-                call_id,
-                tool_name,
-                actor_type=actor_type,
-                actor_id=actor_id,
-                actor_name=actor_name,
-                parent_call_id=parent_call_id,
-            )
+    if decision.call_id is not None:
+        result["call_id"] = decision.call_id
     if decision.action == "reroute" and decision.target_model is not None:
         result["target_model"] = decision.target_model
     return result
@@ -381,11 +241,11 @@ def l6e_record_usage(
     ] = None,
     callback_request_id: Annotated[
         str | None,
-        "Optional LiteLLM callback request ID for auditability and correlation diagnostics.",
+        "Optional provider request ID for auditability and correlation diagnostics.",
     ] = None,
     callback_trace_id: Annotated[
         str | None,
-        "Optional LiteLLM trace ID for auditability and correlation diagnostics.",
+        "Optional provider trace ID for auditability and correlation diagnostics.",
     ] = None,
     correlation_key: Annotated[
         str | None,
@@ -393,8 +253,7 @@ def l6e_record_usage(
     ] = None,
     correlation_source: Annotated[
         str | None,
-        "Optional source for the correlation key, such as spend_logs_metadata, "
-        "request_tags, or active_call fallback.",
+        "Optional source for the correlation key, such as spend_logs_metadata or request_tags.",
     ] = None,
     hosted_ledger_id: Annotated[
         str | None,
@@ -500,9 +359,6 @@ def l6e_run_end(
     except KeyError as exc:
         raise ToolError(exc.args[0]) from exc
     log.append(summary)
-    if session.advanced_fallback_enabled:
-        _clear_active_session_file(session_id)
-        _clear_active_call_file(session_id)
 
     call_exactness_states = [ExactnessState(c.exactness_state) for c in calls]
     run_exactness = run_exactness_state(call_exactness_states)

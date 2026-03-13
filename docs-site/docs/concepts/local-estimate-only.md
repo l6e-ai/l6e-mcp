@@ -49,7 +49,7 @@ Common sources of drift:
 
 ## The accounting path, precisely
 
-When `l6e_run_start` is called without `proxy_mode=True`, the session opens in `estimate_only` accounting mode. This is visible in the response and in `l6e_run_status` as `accounting_mode: "estimate_only"`.
+The session opens in `estimate_only` accounting mode. This is visible in `l6e_run_status` as `accounting_mode: "estimate_only"`.
 
 Each `l6e_authorize_call` call:
 1. Reads persisted spend from the local SQLite store
@@ -67,13 +67,11 @@ If you are writing agent rules that call `l6e_authorize_call`, be conservative. 
 
 ## Upgrading to exact accounting
 
-If you need the gate to act on real token counts rather than estimates, there are two paths:
-
-**Self-hosted LiteLLM proxy (`proxy_mode=True`):** Run a local LiteLLM proxy that forwards success callbacks to `l6e-mcp`'s callback server. The callback server calls `l6e_record_usage` automatically after each call completes, updating the pending call row with actual token counts.
+If you need the gate to act on real token counts rather than estimates:
 
 **Manual `l6e_record_usage` calls:** If your agent has access to the provider response, it can call `l6e_record_usage` directly with `actual_prompt_tokens` and `actual_completion_tokens`. This is idempotent and updates the existing call row rather than creating a duplicate spend record.
 
-In either case, the pre-call gate decision is still based on estimates — the MCP protocol cannot block a call from going out and then wait for the response before deciding. The reconciliation path corrects the accumulated spend ledger after the fact, which improves future gate decisions for the same session.
+The pre-call gate decision is still based on estimates — the MCP protocol cannot block a call from going out and then wait for the response before deciding. The reconciliation path corrects the accumulated spend ledger after the fact, which improves future gate decisions for the same session.
 
 ---
 

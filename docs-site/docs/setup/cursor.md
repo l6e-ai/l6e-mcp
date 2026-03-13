@@ -7,9 +7,7 @@ sidebar_position: 1
 
 Connect the `l6e-budget` MCP server to Cursor for session-scoped budget enforcement.
 
-This setup is the OSS estimate-first path. For premium exact accounting, prefer
-the hosted public edge design. The LiteLLM self-hosted route remains an
-advanced fallback for operators and enterprise users.
+This setup uses the estimate-first path. The agent gates calls using pre-call token estimates; call `l6e_record_usage` manually if you want to feed actual token counts back into the ledger for exact accounting.
 
 ## Install
 
@@ -70,24 +68,6 @@ The "No MCP resources available" message in Cursor chat is expected and harmless
 
 Set up a Cursor rule — either globally or per-project.
 The rule from [`.cursor/rules/l6e-budget-enforcement.mdc`](https://github.com/l6e-ai/l6e-mcp/blob/main/.cursor/rules/l6e-budget-enforcement.mdc) on the latest release tag is always the best source.
-
-## Exact accounting options
-
-The default OSS experience is estimate-first:
-- `l6e_authorize_call` gates expensive work using proportional estimates
-- it also returns pricing confidence metadata (`model_pricing_known`, `pricing_confidence`, `pricing_warning`) for unknown model IDs
-- `.l6e/runs.jsonl` gives local run summaries
-
-### Advanced: self-hosted LiteLLM proxy add-on
-
-If you want to run the self-hosted LiteLLM proxy + callback path, there are two pieces to configure:
-
-1. Point Cursor itself at LiteLLM (see the [LiteLLM proxy setup guide](https://github.com/l6e-ai/l6e-mcp/blob/main/docs/mcp-setup-litellm-proxy.md))
-2. Tell the agent to opt into proxy-mode by adding `proxy_mode: true` to your rule
-
-:::caution
-LiteLLM's current Cursor integration only honors custom API keys in **Ask** and **Plan** modes. In **Agent** mode, Cursor may bypass the proxy even when the MCP side is configured correctly. Do **not** add `proxy_mode: true` unless you are actually running the full stack: MCP HTTP server + `l6e-callback-server` + LiteLLM proxy.
-:::
 
 ## Example conversation starter
 

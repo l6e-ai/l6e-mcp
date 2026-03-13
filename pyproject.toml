@@ -8,7 +8,7 @@ license-files = ["LICEN[CS]E*"]
 requires-python = ">=3.11"
 dependencies = [
     "l6e>=0.1.5",
-    "fastmcp>=2.0",
+    "fastmcp>=3.0,<4",
 ]
 
 [project.optional-dependencies]
@@ -24,6 +24,11 @@ dev = [
 [project.scripts]
 l6e-mcp = "l6e_mcp.server:main"
 l6e-calibration-generate = "l6e_mcp.tools.calibration_generator:main"
+
+[project.urls]
+Homepage = "https://github.com/l6e-ai/l6e-mcp"
+Repository = "https://github.com/l6e-ai/l6e-mcp"
+Documentation = "https://github.com/l6e-ai/l6e-mcp#readme"
 
 [build-system]
 requires = ["setuptools>=68"]

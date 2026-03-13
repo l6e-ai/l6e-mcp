@@ -10,7 +10,7 @@ async def test_run_end_includes_lag_and_coverage_fields():
     async with Client(transport=mcp) as client:
         start = await client.call_tool(
             "l6e_run_start",
-            {"budget_usd": 5.0, "model": "gpt-4o", "proxy_mode": True},
+            {"budget_usd": 5.0, "model": "gpt-4o", "usage_channel": "self_hosted_relay"},
             raise_on_error=False,
         )
         session_id = start.data["session_id"]

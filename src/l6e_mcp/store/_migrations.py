@@ -13,10 +13,8 @@ def init_schema(conn: sqlite3.Connection) -> None:
             policy_json TEXT NOT NULL,
             source TEXT NOT NULL,
             log_path TEXT,
-            proxy_mode INTEGER NOT NULL,
             accounting_mode TEXT NOT NULL DEFAULT 'estimate_only',
             usage_channel TEXT NOT NULL DEFAULT 'none',
-            advanced_fallback_enabled INTEGER NOT NULL DEFAULT 0,
             ask_mode_exact_capable INTEGER NOT NULL DEFAULT 0,
             plan_mode_exact_capable INTEGER NOT NULL DEFAULT 0,
             agent_mode_exact_capable INTEGER NOT NULL DEFAULT 0,
@@ -133,7 +131,6 @@ def init_schema(conn: sqlite3.Connection) -> None:
     _ensure_column(conn, "calls", "mode_exact_capable", "INTEGER")
     _ensure_column(conn, "sessions", "accounting_mode", "TEXT NOT NULL DEFAULT 'estimate_only'")
     _ensure_column(conn, "sessions", "usage_channel", "TEXT NOT NULL DEFAULT 'none'")
-    _ensure_column(conn, "sessions", "advanced_fallback_enabled", "INTEGER NOT NULL DEFAULT 0")
     _ensure_column(conn, "sessions", "ask_mode_exact_capable", "INTEGER NOT NULL DEFAULT 0")
     _ensure_column(conn, "sessions", "plan_mode_exact_capable", "INTEGER NOT NULL DEFAULT 0")
     _ensure_column(conn, "sessions", "agent_mode_exact_capable", "INTEGER NOT NULL DEFAULT 0")

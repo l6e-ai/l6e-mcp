@@ -91,20 +91,12 @@ def _session_from_row(row: sqlite3.Row) -> SessionState:
         accounting_mode=(
             str(row["accounting_mode"])
             if row["accounting_mode"] is not None
-            else (
-                store_schema.ACCOUNTING_MODE_EXACT_OPTIONAL
-                if bool(row["proxy_mode"])
-                else store_schema.ACCOUNTING_MODE_ESTIMATE_ONLY
-            )
+            else store_schema.ACCOUNTING_MODE_ESTIMATE_ONLY
         ),
         usage_channel=(
             str(row["usage_channel"])
             if row["usage_channel"] is not None
-            else (
-                store_schema.USAGE_CHANNEL_SELF_HOSTED_RELAY
-                if bool(row["proxy_mode"])
-                else store_schema.USAGE_CHANNEL_NONE
-            )
+            else store_schema.USAGE_CHANNEL_NONE
         ),
         state=str(row["state"]),
         next_call_index=int(row["next_call_index"]),
@@ -119,7 +111,6 @@ def _session_from_row(row: sqlite3.Row) -> SessionState:
         finalized_at=(
             float(row["finalized_at"]) if row["finalized_at"] is not None else None
         ),
-        advanced_fallback_enabled=bool(row["advanced_fallback_enabled"]),
         ask_mode_exact_capable=bool(row["ask_mode_exact_capable"]),
         plan_mode_exact_capable=bool(row["plan_mode_exact_capable"]),
         agent_mode_exact_capable=bool(row["agent_mode_exact_capable"]),

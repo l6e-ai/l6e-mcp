@@ -15,7 +15,7 @@ def test_mode_coverage_defaults_for_self_hosted_proxy(tmp_path):
         policy=policy,
         source="mcp",
         log_path=str(tmp_path / "runs.jsonl"),
-        proxy_mode=True,
+        usage_channel="self_hosted_relay",
     )
     assert session.ask_mode_exact_capable is True
     assert session.plan_mode_exact_capable is True
@@ -31,7 +31,7 @@ def test_call_mode_classifies_exact_unavailable_when_mode_not_capable(tmp_path):
         policy=policy,
         source="mcp",
         log_path=str(tmp_path / "runs.jsonl"),
-        proxy_mode=True,
+        usage_channel="self_hosted_relay",
     )
     call = store.create_call(
         session_id=session.session_id,

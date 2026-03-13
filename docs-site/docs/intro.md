@@ -58,6 +58,8 @@ That said, it still works. An agent told it has a $2 budget and that it must che
 |---|---|---|
 | `L6E_LOG_PATH` | `.l6e/runs.jsonl` (relative to cwd) | Override the run log path. **Required for Windsurf; strongly recommended for OpenClaw.** |
 | `L6E_SESSION_DB_PATH` | `~/.l6e/sessions.db` | Override the local SQLite database path. |
+| `L6E_CALIBRATION_PATH` | _(unset)_ | Path to a JSON calibration file produced by `l6e-calibration-generate`. Requires `L6E_EXPERIMENTAL_DUAL_TOKEN_ESTIMATION=1`. |
+| `L6E_EXPERIMENTAL_DUAL_TOKEN_ESTIMATION` | `0` | Set to `1` to enable per-model token-estimate calibration. Required for `L6E_CALIBRATION_PATH` to take effect. |
 
 ## Exactness states
 
@@ -74,7 +76,7 @@ That said, it still works. An agent told it has a $2 budget and that it must che
 
 - **Rerouting is advisory only.** When `l6e_authorize_call` returns `"action": "reroute"`, it signals the agent to prompt the user to select a cheaper model. The MCP protocol has no primitive for forcing a model switch.
 - **Local persistence only.** Sessions persist in a local SQLite database; there is no remote sync or team-level control plane in the OSS version.
-- **Estimate-first by default.** Exact real-time accounting requires either `l6e_record_usage` calls from your agent or the optional self-hosted LiteLLM proxy path.
+- **Estimate-first by default.** Exact real-time accounting requires `l6e_record_usage` calls from your agent with the actual token counts after each LLM call completes.
 
 ## License
 

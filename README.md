@@ -7,7 +7,7 @@
 
 Session-scoped budget enforcement for AI coding assistants via the [Model Context Protocol](https://modelcontextprotocol.io/).
 
-Wraps the [l6e](https://github.com/l6e-ai/l6e) enforcement runtime and exposes five MCP tools that let Cursor, Claude Code, and Windsurf enforce per-session LLM budgets.
+Wraps the [l6e](https://github.com/l6e-ai/l6e) core enforcement runtime and exposes five MCP tools that let Cursor, Claude Code, Windsurf, and OpenClaw enforce per-session LLM budgets.
 
 ## Install
 
@@ -35,7 +35,7 @@ That said, it still works. An agent that is told it has a $2 budget and must che
 
 **A practical starting point:** Set small budgets, $1–3, and observe how the estimates track against your provider's actual costs for a few sessions. You'll quickly get a sense of how accurate the estimates are for the models and task types you use.
 
-If you need genuinely hard enforcement against actual spend, the self-hosted LiteLLM proxy path (`proxy_mode=True`) or a future hosted relay can feed real token counts back via `l6e_record_usage`.
+If you need genuinely hard enforcement against actual spend, you can call `l6e_record_usage` manually after each LLM call to feed real token counts back into the ledger.
 
 ## How it works
 
@@ -48,8 +48,20 @@ If you need genuinely hard enforcement against actual spend, the self-hosted Lit
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `L6E_LOG_PATH` | `.l6e/runs.jsonl` (relative to cwd) | Override the run log path. **Required for Windsurf** — see setup guide. |
+| `L6E_LOG_PATH` | `.l6e/runs.jsonl` (relative to cwd) | Override the run log path. **Required for Windsurf; strongly recommended for OpenClaw** — see setup guides. |
 | `L6E_SESSION_DB_PATH` | `~/.l6e/sessions.db` | Override the local SQLite database path. |
+| `L6E_CALIBRATION_PATH` | _(unset)_ | Path to a JSON calibration file produced by `l6e-calibration-generate`. Requires `L6E_EXPERIMENTAL_DUAL_TOKEN_ESTIMATION=1`. |
+| `L6E_EXPERIMENTAL_DUAL_TOKEN_ESTIMATION` | `0` | Set to `1` to enable per-model token-estimate calibration. Required for `L6E_CALIBRATION_PATH` to take effect. |
+
+## Calibration tool
+
+After running a few sessions, you can inspect how your estimates track against actuals and generate a calibration file:
+
+```bash
+l6e-calibration-generate
+```
+
+This reads your run log (`.l6e/runs.jsonl`) and outputs a per-model calibration JSON file. Point `L6E_CALIBRATION_PATH` at it and set `L6E_EXPERIMENTAL_DUAL_TOKEN_ESTIMATION=1` to have future estimates use the corrected multipliers.
 
 ## Exactness states
 
@@ -64,7 +76,7 @@ If you need genuinely hard enforcement against actual spend, the self-hosted Lit
 
 - **Rerouting is advisory only.** When `l6e_authorize_call` returns `"action": "reroute"`, it signals the agent to prompt the user to select a cheaper model. The MCP protocol has no primitive for forcing a model switch.
 - **Local persistence only.** Sessions persist in a local SQLite database; there is no remote sync or team-level control plane in the OSS version.
-- **Estimate-first by default.** Exact real-time accounting requires either `l6e_record_usage` calls from your agent or the optional self-hosted LiteLLM proxy path.
+- **Estimate-first by default.** Exact real-time accounting requires `l6e_record_usage` calls from your agent with the actual token counts after each LLM call completes.
 
 ## License
 

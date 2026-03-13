@@ -145,19 +145,6 @@ def test_increment_finalized_session_raises(tmp_path):
         repo.increment_checkpoint_calls("session_cursor_2026-03-12_finalized4")
 
 
-def test_create_session_with_proxy_mode(tmp_path):
-    repo = _repo(tmp_path)
-    session = repo.create(
-        session_id="session_cursor_2026-03-12_proxy1",
-        model="gpt-4o",
-        policy=_policy(),
-        source="mcp",
-        log_path=None,
-        proxy_mode=True,
-    )
-    assert session.proxy_mode is True
-
-
 def test_create_session_with_mode_coverage_overrides(tmp_path):
     repo = _repo(tmp_path)
     session = repo.create(

@@ -6,7 +6,6 @@ import re
 
 import pytest
 
-from l6e_mcp import server as srv
 from l6e_mcp.session_store import LocalSessionStore
 
 SESSION_ID_RE = re.compile(r"^session_.+_\d{4}-\d{2}-\d{2}_[0-9a-f]{8}$")
@@ -69,41 +68,6 @@ async def test_session_start_persists_session(client):
     assert session is not None
     assert session.model == "gpt-4o"
     assert session.policy.budget == pytest.approx(2.0)
-
-
-async def test_session_start_default_proxy_mode_does_not_write_active_files(
-    client,
-    tmp_path,
-    monkeypatch,
-):
-    active_session = tmp_path / "active_session"
-    active_call = tmp_path / "active_call"
-    monkeypatch.setattr(srv, "_ACTIVE_SESSION_FILE", active_session)
-    monkeypatch.setattr(srv, "_ACTIVE_CALL_FILE", active_call)
-
-    result = await start_session(client, budget_usd=2.0, proxy_mode=True)
-    assert not active_session.exists()
-    assert not active_call.exists()
-    assert "active_session_file" not in result
-    assert "active_call_file" not in result
-
-
-async def test_session_start_advanced_fallback_writes_active_files(client, tmp_path, monkeypatch):
-    active_session = tmp_path / "active_session"
-    active_call = tmp_path / "active_call"
-    monkeypatch.setattr(srv, "_ACTIVE_SESSION_FILE", active_session)
-    monkeypatch.setattr(srv, "_ACTIVE_CALL_FILE", active_call)
-
-    result = await start_session(
-        client,
-        budget_usd=2.0,
-        proxy_mode=True,
-        advanced_fallback=True,
-    )
-    assert active_session.exists()
-    assert active_session.read_text().strip() == result["session_id"]
-    assert result["active_session_file"] == str(active_session)
-    assert result["active_call_file"] == str(active_call)
 
 
 async def test_checkpoint_returns_call_id_and_updates_spend(client):
@@ -337,7 +301,9 @@ async def test_spend_is_readonly(client):
 
 async def test_run_end_exposes_mode_coverage_and_lag_indicators(client):
     """Exactness/mode-coverage detail is stored per-call; slim run_end only returns summary."""
-    session = await start_session(client, budget_usd=5.0, proxy_mode=True, model="gpt-4o")
+    session = await start_session(
+        client, budget_usd=5.0, usage_channel="self_hosted_relay", model="gpt-4o"
+    )
     pending = await client.call_tool(
         "l6e_authorize_call",
         {
@@ -364,7 +330,9 @@ async def test_run_end_exposes_mode_coverage_and_lag_indicators(client):
 
 
 async def test_session_end_writes_jsonl_with_reconciled_record(client, tmp_path):
-    session = await start_session(client, budget_usd=10.0, proxy_mode=True, model="gpt-4o")
+    session = await start_session(
+        client, budget_usd=10.0, usage_channel="self_hosted_relay", model="gpt-4o"
+    )
     checkpoint = await client.call_tool(
         "l6e_authorize_call",
         {"session_id": session["session_id"], "tool_name": "read_files", "estimated_tokens": 500},
@@ -404,7 +372,9 @@ async def test_session_end_writes_jsonl_with_reconciled_record(client, tmp_path)
 
 
 async def test_session_end_writes_subagent_metadata_to_jsonl(client, tmp_path):
-    session = await start_session(client, budget_usd=10.0, proxy_mode=True, model="gpt-4o")
+    session = await start_session(
+        client, budget_usd=10.0, usage_channel="self_hosted_relay", model="gpt-4o"
+    )
     await client.call_tool(
         "l6e_authorize_call",
         {
@@ -432,30 +402,6 @@ async def test_session_end_writes_subagent_metadata_to_jsonl(client, tmp_path):
     assert entry["subagents"][0]["actor_id"] == "subagent_search_1"
     assert entry["records"][0]["actor_type"] == "subagent"
     assert entry["records"][0]["parent_call_id"] == "call_parent_123"
-
-
-async def test_session_end_clears_active_files(client, tmp_path, monkeypatch):
-    active_session = tmp_path / "active_session"
-    active_call = tmp_path / "active_call"
-    monkeypatch.setattr(srv, "_ACTIVE_SESSION_FILE", active_session)
-    monkeypatch.setattr(srv, "_ACTIVE_CALL_FILE", active_call)
-
-    session = await start_session(client, budget_usd=2.0, proxy_mode=True, advanced_fallback=True)
-    await client.call_tool(
-        "l6e_authorize_call",
-        {"session_id": session["session_id"], "tool_name": "read_files", "estimated_tokens": 500},
-        raise_on_error=False,
-    )
-    assert active_session.exists()
-    assert active_call.exists()
-
-    await client.call_tool(
-        "l6e_run_end",
-        {"session_id": session["session_id"]},
-        raise_on_error=False,
-    )
-    assert not active_session.exists()
-    assert not active_call.exists()
 
 
 async def test_session_end_twice_is_tool_error(client):
@@ -607,7 +553,9 @@ async def test_estimate_only_mode_omits_net_savings_and_includes_note(client, tm
 async def test_exact_mode_includes_net_savings_usd(client, tmp_path):
     """In exact mode the slim run_end has savings_confidence='exact'.
     The net_savings detail lives in the run log."""
-    session = await start_session(client, budget_usd=10.0, proxy_mode=True, model="gpt-4o")
+    session = await start_session(
+        client, budget_usd=10.0, usage_channel="self_hosted_relay", model="gpt-4o"
+    )
     checkpoint = await client.call_tool(
         "l6e_authorize_call",
         {"session_id": session["session_id"], "tool_name": "read_files", "estimated_tokens": 500},
@@ -952,7 +900,7 @@ async def test_authorize_call_reroute_includes_target_model(client):
 
 
 async def test_authorize_call_no_correlation_block_in_oss_mode(client):
-    """The correlation envelope is proxy-only; OSS sessions must not emit it."""
+    """The correlation envelope was proxy-only and has been removed; sessions must never emit it."""
     session = await start_session(client, budget_usd=10.0, model="gpt-4o")
     result = await client.call_tool(
         "l6e_authorize_call",
@@ -1015,7 +963,7 @@ async def test_run_status_accepts_estimate_params(client):
 # ---------------------------------------------------------------------------
 
 async def test_run_start_response_is_slim(client):
-    """l6e_run_start must return only session_id in OSS/non-proxy mode.
+    """l6e_run_start must return only session_id.
     Echoed inputs and internal config fields must not be in the response."""
     result = await client.call_tool(
         "l6e_run_start",
@@ -1041,21 +989,6 @@ async def test_run_start_response_is_slim(client):
         assert field not in data, (
             f"Noise field '{field}' should not appear in OSS run_start response"
         )
-
-
-async def test_run_start_proxy_advanced_fallback_includes_file_paths(client, tmp_path, monkeypatch):
-    """In proxy+advanced_fallback mode, active file paths are actionable and must be returned."""
-    active_session = tmp_path / "active_session"
-    active_call = tmp_path / "active_call"
-    monkeypatch.setattr(srv, "_ACTIVE_SESSION_FILE", active_session)
-    monkeypatch.setattr(srv, "_ACTIVE_CALL_FILE", active_call)
-
-    result = await start_session(
-        client, budget_usd=2.0, proxy_mode=True, advanced_fallback=True
-    )
-    assert "session_id" in result
-    assert "active_session_file" in result
-    assert "active_call_file" in result
 
 
 # ---------------------------------------------------------------------------
