@@ -11,13 +11,17 @@ from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 from l6e._log import LocalRunLog
 from l6e._types import BudgetMode, PipelinePolicy, UnknownModelPricingMode
+from l6e.costs import LiteLLMCostEstimator
 
 from l6e_mcp.contracts.exactness import ExactnessState
-from l6e_mcp.contracts.usage_report import UsageReport
 from l6e_mcp.core.authorization import authorize_call
 from l6e_mcp.core.exactness import run_exactness_state
-from l6e_mcp.core.reconciliation import reconcile_usage_report
-from l6e_mcp.session_store import LocalSessionStore, SessionState, session_run_summary
+from l6e_mcp.session_store import (
+    LocalSessionStore,
+    ReconcileRequest,
+    SessionState,
+    session_run_summary,
+)
 
 mcp = FastMCP(
     name="l6e-budget",
@@ -259,10 +263,6 @@ def l6e_record_usage(
         str | None,
         "Optional hosted-ledger identifier for this exact usage record.",
     ] = None,
-    idempotency_key: Annotated[
-        str | None,
-        "Optional idempotency key from usage ingestion.",
-    ] = None,
 ) -> dict:
     """Reconcile a pending call with actual token usage after the call completes. Idempotent for the same values on the same call_id."""  # noqa: E501 — MCP tool docstring surfaces verbatim to agents; truncating it degrades guidance quality
     store = _get_session_store()
@@ -273,24 +273,25 @@ def l6e_record_usage(
     if session is None:
         raise ToolError(f"Unknown session '{existing.session_id}'. Call l6e_run_start first.")
 
-    report = UsageReport(
+    resolved_model = model_used or existing.model_used
+    estimator = LiteLLMCostEstimator(
+        fallback_cost_per_1k_tokens=session.policy.unknown_model_cost_per_1k_tokens
+    )
+    actual_cost = estimator.estimate(resolved_model, actual_prompt_tokens, actual_completion_tokens)
+    request = ReconcileRequest(
         call_id=call_id,
-        usage_source=correlation_source or "direct_tool",
-        model_used=model_used or existing.model_used,
-        prompt_tokens=actual_prompt_tokens,
-        completion_tokens=actual_completion_tokens,
-        provider_request_id=callback_request_id,
-        provider_trace_id=callback_trace_id,
+        actual_prompt_tokens=actual_prompt_tokens,
+        actual_completion_tokens=actual_completion_tokens,
+        actual_cost_usd=actual_cost,
+        model_used=resolved_model,
+        callback_request_id=callback_request_id,
+        callback_trace_id=callback_trace_id,
+        correlation_key=correlation_key,
+        correlation_source=correlation_source,
         hosted_ledger_id=hosted_ledger_id,
-        idempotency_key=idempotency_key,
     )
     try:
-        reconciled = reconcile_usage_report(
-            store=store,
-            session=session,
-            existing_call=existing,
-            report=report,
-        )
+        reconciled = store.reconcile_call(request)
     except KeyError as exc:
         raise ToolError(exc.args[0]) from exc
 

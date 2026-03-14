@@ -180,7 +180,6 @@ async def test_reconcile_call_updates_existing_pending_call_without_duplication(
             "actual_completion_tokens": 300,
             "model_used": "gpt-4o-mini",
             "hosted_ledger_id": "ledger_123",
-            "idempotency_key": "idem_123",
         },
         raise_on_error=False,
     )

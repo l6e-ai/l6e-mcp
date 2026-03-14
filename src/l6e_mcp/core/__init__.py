@@ -1,1 +1,1 @@
-"""Core budgeting and reconciliation domain services."""
+"""Core budgeting domain services."""

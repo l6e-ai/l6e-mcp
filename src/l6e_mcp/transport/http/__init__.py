@@ -1,1 +1,1 @@
-"""HTTP transport helpers for reconciliation and diagnostics."""
+"""HTTP transport layer."""

@@ -11,7 +11,7 @@ from l6e._types import PipelinePolicy, PromptComplexity
 from l6e_mcp.store._connection import _db_path
 
 # Re-export the public types so existing ``from l6e_mcp.session_store import X`` imports work.
-from l6e_mcp.store.calls import CallRepository, CallState
+from l6e_mcp.store.calls import CallRepository, CallState, ReconcileRequest
 from l6e_mcp.store.diagnostics import DiagnosticsRepository
 from l6e_mcp.store.sessions import SessionRepository, SessionState
 from l6e_mcp.store.summary import session_run_summary  # noqa: F401 (re-export)
@@ -20,6 +20,7 @@ __all__ = [
     "LocalSessionStore",
     "SessionState",
     "CallState",
+    "ReconcileRequest",
     "session_run_summary",
 ]
 
@@ -151,32 +152,8 @@ class LocalSessionStore:
     def find_pending_call_by_correlation_key(self, correlation_key: str) -> CallState | None:
         return self._calls.find_pending_by_correlation_key(correlation_key)
 
-    def reconcile_call(
-        self,
-        *,
-        call_id: str,
-        actual_prompt_tokens: int,
-        actual_completion_tokens: int,
-        actual_cost_usd: float,
-        model_used: str | None = None,
-        callback_request_id: str | None = None,
-        callback_trace_id: str | None = None,
-        correlation_key: str | None = None,
-        correlation_source: str | None = None,
-        hosted_ledger_id: str | None = None,
-    ) -> CallState:
-        return self._calls.reconcile(
-            call_id=call_id,
-            actual_prompt_tokens=actual_prompt_tokens,
-            actual_completion_tokens=actual_completion_tokens,
-            actual_cost_usd=actual_cost_usd,
-            model_used=model_used,
-            callback_request_id=callback_request_id,
-            callback_trace_id=callback_trace_id,
-            correlation_key=correlation_key,
-            correlation_source=correlation_source,
-            hosted_ledger_id=hosted_ledger_id,
-        )
+    def reconcile_call(self, request: ReconcileRequest) -> CallState:
+        return self._calls.reconcile(request)
 
     # ------------------------------------------------------------------
     # Diagnostics methods

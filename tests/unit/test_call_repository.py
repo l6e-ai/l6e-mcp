@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 from l6e._types import BudgetMode, PipelinePolicy
 
-from l6e_mcp.store.calls import CallRepository
+from l6e_mcp.store.calls import CallRepository, ReconcileRequest
 from l6e_mcp.store.sessions import SessionRepository
 
 
@@ -94,13 +94,12 @@ def test_reconcile_call(tmp_path):
         estimated_cost_usd=0.01,
         rerouted=False,
     )
-    reconciled = calls.reconcile(
+    reconciled = calls.reconcile(ReconcileRequest(
         call_id=call.call_id,
         actual_prompt_tokens=400,
         actual_completion_tokens=150,
         actual_cost_usd=0.008,
-    )
-    assert reconciled.status == "reconciled"
+    ))
     assert reconciled.actual_prompt_tokens == 400
     assert reconciled.actual_completion_tokens == 150
     assert reconciled.actual_cost_usd == pytest.approx(0.008)
@@ -118,13 +117,13 @@ def test_reconcile_call_with_model_used(tmp_path):
         estimated_cost_usd=0.01,
         rerouted=False,
     )
-    reconciled = calls.reconcile(
+    reconciled = calls.reconcile(ReconcileRequest(
         call_id=call.call_id,
         actual_prompt_tokens=400,
         actual_completion_tokens=150,
         actual_cost_usd=0.008,
         model_used="gpt-4o-mini",
-    )
+    ))
     assert reconciled.model_used == "gpt-4o-mini"
 
 
@@ -140,18 +139,18 @@ def test_reconcile_idempotent_same_values(tmp_path):
         estimated_cost_usd=0.01,
         rerouted=False,
     )
-    calls.reconcile(
+    calls.reconcile(ReconcileRequest(
         call_id=call.call_id,
         actual_prompt_tokens=400,
         actual_completion_tokens=150,
         actual_cost_usd=0.008,
-    )
-    r2 = calls.reconcile(
+    ))
+    r2 = calls.reconcile(ReconcileRequest(
         call_id=call.call_id,
         actual_prompt_tokens=400,
         actual_completion_tokens=150,
         actual_cost_usd=0.008,
-    )
+    ))
     assert r2.status == "reconciled"
 
 
@@ -268,12 +267,12 @@ def test_reconcile_on_finalized_session_raises(tmp_path):
     )
     sessions.finalize("session_cursor_2026-03-12_calltest1")
     with pytest.raises(KeyError, match="finalized"):
-        calls.reconcile(
+        calls.reconcile(ReconcileRequest(
             call_id=call.call_id,
             actual_prompt_tokens=400,
             actual_completion_tokens=150,
             actual_cost_usd=0.008,
-        )
+        ))
 
 
 def test_reconcile_rereconcile_with_different_values_raises(tmp_path):
@@ -290,19 +289,19 @@ def test_reconcile_rereconcile_with_different_values_raises(tmp_path):
         estimated_cost_usd=0.01,
         rerouted=False,
     )
-    calls.reconcile(
+    calls.reconcile(ReconcileRequest(
         call_id=call.call_id,
         actual_prompt_tokens=400,
         actual_completion_tokens=150,
         actual_cost_usd=0.008,
-    )
+    ))
     with pytest.raises(KeyError, match="already reconciled"):
-        calls.reconcile(
+        calls.reconcile(ReconcileRequest(
             call_id=call.call_id,
             actual_prompt_tokens=450,
             actual_completion_tokens=175,
             actual_cost_usd=0.009,
-        )
+        ))
     # Original values must be preserved
     stored = calls.get(call.call_id)
     assert stored is not None

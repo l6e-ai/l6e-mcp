@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 from l6e._types import BudgetMode, PipelinePolicy
 
-from l6e_mcp.session_store import LocalSessionStore, session_run_summary
+from l6e_mcp.session_store import LocalSessionStore, ReconcileRequest, session_run_summary
 
 
 def test_session_store_reconciles_existing_call(tmp_path):
@@ -29,13 +29,13 @@ def test_session_store_reconciles_existing_call(tmp_path):
         estimated_cost_usd=0.1,
         rerouted=False,
     )
-    reconciled = store.reconcile_call(
+    reconciled = store.reconcile_call(ReconcileRequest(
         call_id=call.call_id,
         actual_prompt_tokens=123,
         actual_completion_tokens=45,
         actual_cost_usd=0.25,
         model_used="gpt-4o-mini",
-    )
+    ))
 
     assert reconciled.status == "reconciled"
     assert reconciled.actual_prompt_tokens == 123
@@ -77,13 +77,13 @@ def test_session_store_shares_state_across_instances(tmp_path):
         rerouted=False,
     )
 
-    reconciled = reader.reconcile_call(
+    reconciled = reader.reconcile_call(ReconcileRequest(
         call_id=call.call_id,
         actual_prompt_tokens=200,
         actual_completion_tokens=50,
         actual_cost_usd=0.2,
         model_used="gpt-4o-mini",
-    )
+    ))
     summary = session_run_summary(session, writer.list_calls_for_session(session.session_id))
 
     assert reconciled.call_id == call.call_id
@@ -112,7 +112,7 @@ def test_session_store_persists_callback_correlation_fields(tmp_path):
         estimated_cost_usd=0.1,
         rerouted=False,
     )
-    reconciled = store.reconcile_call(
+    reconciled = store.reconcile_call(ReconcileRequest(
         call_id=call.call_id,
         actual_prompt_tokens=123,
         actual_completion_tokens=45,
@@ -122,7 +122,7 @@ def test_session_store_persists_callback_correlation_fields(tmp_path):
         callback_trace_id="trace_123",
         correlation_key=call.call_id,
         correlation_source="spend_logs_metadata",
-    )
+    ))
     assert reconciled.callback_request_id == "req_123"
     assert reconciled.callback_trace_id == "trace_123"
     assert reconciled.correlation_key == call.call_id

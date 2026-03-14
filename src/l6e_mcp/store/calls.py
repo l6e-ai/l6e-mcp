@@ -16,6 +16,22 @@ from l6e_mcp.store._serialization import _call_from_row
 
 
 @dataclass(frozen=True)
+class ReconcileRequest:
+    """Input contract for reconciling a pending call with actual usage."""
+
+    call_id: str
+    actual_prompt_tokens: int
+    actual_completion_tokens: int
+    actual_cost_usd: float
+    model_used: str | None = None
+    callback_request_id: str | None = None
+    callback_trace_id: str | None = None
+    correlation_key: str | None = None
+    correlation_source: str | None = None
+    hosted_ledger_id: str | None = None
+
+
+@dataclass(frozen=True)
 class CallState:
     call_id: str
     session_id: str
@@ -276,20 +292,7 @@ class CallRepository:
             ).fetchone()
         return _call_from_row(row) if row is not None else None
 
-    def reconcile(
-        self,
-        *,
-        call_id: str,
-        actual_prompt_tokens: int,
-        actual_completion_tokens: int,
-        actual_cost_usd: float,
-        model_used: str | None = None,
-        callback_request_id: str | None = None,
-        callback_trace_id: str | None = None,
-        correlation_key: str | None = None,
-        correlation_source: str | None = None,
-        hosted_ledger_id: str | None = None,
-    ) -> CallState:
+    def reconcile(self, request: ReconcileRequest) -> CallState:
         reconciled_at = time.time()
         with make_connection(self._path) as conn:
             row = conn.execute(
@@ -300,28 +303,28 @@ class CallRepository:
                 JOIN sessions s ON s.session_id = c.session_id
                 WHERE c.call_id = ?
                 """,
-                (call_id,),
+                (request.call_id,),
             ).fetchone()
             if row is None:
-                raise KeyError(f"Unknown call '{call_id}'.")
+                raise KeyError(f"Unknown call '{request.call_id}'.")
             if row["state"] == "finalized":
-                raise KeyError(f"Call '{call_id}' belongs to a finalized session.")
+                raise KeyError(f"Call '{request.call_id}' belongs to a finalized session.")
             if row["status"] == "reconciled":
                 same_values = (
-                    row["actual_prompt_tokens"] == actual_prompt_tokens
-                    and row["actual_completion_tokens"] == actual_completion_tokens
-                    and float(row["actual_cost_usd"]) == actual_cost_usd
+                    row["actual_prompt_tokens"] == request.actual_prompt_tokens
+                    and row["actual_completion_tokens"] == request.actual_completion_tokens
+                    and float(row["actual_cost_usd"]) == request.actual_cost_usd
                 )
                 if same_values:
-                    call = self.get(call_id)
+                    call = self.get(request.call_id)
                     if call is None:
-                        raise RuntimeError(f"Failed to reload reconciled call '{call_id}'")
+                        raise RuntimeError(f"Failed to reload reconciled call '{request.call_id}'")
                     return call
                 raise KeyError(
-                    f"Call '{call_id}' is already reconciled with different values. "
+                    f"Call '{request.call_id}' is already reconciled with different values. "
                     "Re-reconciliation with different token counts is not allowed."
                 )
-            if model_used is None:
+            if request.model_used is None:
                 conn.execute(
                     """
                     UPDATE calls
@@ -336,17 +339,17 @@ class CallRepository:
                     WHERE call_id = ?
                     """,
                     (
-                        actual_prompt_tokens,
-                        actual_completion_tokens,
-                        actual_cost_usd,
+                        request.actual_prompt_tokens,
+                        request.actual_completion_tokens,
+                        request.actual_cost_usd,
                         reconciled_at,
-                        callback_request_id,
-                        callback_trace_id,
-                        correlation_key,
-                        correlation_source,
+                        request.callback_request_id,
+                        request.callback_trace_id,
+                        request.correlation_key,
+                        request.correlation_source,
                         ExactnessState.EXACT_RECORDED.value,
-                        hosted_ledger_id,
-                        call_id,
+                        request.hosted_ledger_id,
+                        request.call_id,
                     ),
                 )
             else:
@@ -365,21 +368,21 @@ class CallRepository:
                     WHERE call_id = ?
                     """,
                     (
-                        actual_prompt_tokens,
-                        actual_completion_tokens,
-                        actual_cost_usd,
-                        model_used,
+                        request.actual_prompt_tokens,
+                        request.actual_completion_tokens,
+                        request.actual_cost_usd,
+                        request.model_used,
                         reconciled_at,
-                        callback_request_id,
-                        callback_trace_id,
-                        correlation_key,
-                        correlation_source,
+                        request.callback_request_id,
+                        request.callback_trace_id,
+                        request.correlation_key,
+                        request.correlation_source,
                         ExactnessState.EXACT_RECORDED.value,
-                        hosted_ledger_id,
-                        call_id,
+                        request.hosted_ledger_id,
+                        request.call_id,
                     ),
                 )
-        call = self.get(call_id)
+        call = self.get(request.call_id)
         if call is None:
-            raise RuntimeError(f"Failed to reconcile call '{call_id}'")
+            raise RuntimeError(f"Failed to reconcile call '{request.call_id}'")
         return call
