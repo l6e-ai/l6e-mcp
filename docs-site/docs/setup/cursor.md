@@ -32,11 +32,16 @@ Add the following to your MCP configuration file.
   "mcpServers": {
     "l6e-budget": {
       "command": "uvx",
-      "args": ["l6e-mcp"]
+      "args": ["l6e-mcp"],
+      "env": {
+        "L6E_LOG_PATH": "${HOME}/.l6e/runs.jsonl"
+      }
     }
   }
 }
 ```
+
+`L6E_LOG_PATH` is recommended. Cursor spawns MCP servers as child processes, so without it `runs.jsonl` will be written relative to wherever the Cursor process started — which is not always your project directory, particularly with a global config.
 
 If you installed `l6e-mcp` manually instead of using `uvx`:
 
@@ -44,7 +49,10 @@ If you installed `l6e-mcp` manually instead of using `uvx`:
 {
   "mcpServers": {
     "l6e-budget": {
-      "command": "l6e-mcp"
+      "command": "l6e-mcp",
+      "env": {
+        "L6E_LOG_PATH": "${HOME}/.l6e/runs.jsonl"
+      }
     }
   }
 }
@@ -76,9 +84,8 @@ Use this at the start of a new chat to test the full flow:
 ```
 Using the l6e-budget MCP tools, call l6e_run_start with budget_usd=1.00,
 model="gpt-4o", client="cursor". Show me the full JSON response including
-session_id and local_model. Then add a one-line docstring to any function
-in this project. Call l6e_authorize_call before the edit and l6e_run_end
-when done.
+session_id. Then add a one-line docstring to any function in this project.
+Call l6e_authorize_call before the edit and l6e_run_end when done.
 ```
 
 ## Reading your run log
@@ -87,10 +94,10 @@ After a session ends:
 
 ```bash
 # Most recent session
-tail -1 .l6e/runs.jsonl | python -m json.tool
+tail -1 ~/.l6e/runs.jsonl | python -m json.tool
 
 # All sessions — cost summary
-cat .l6e/runs.jsonl | python -c "
+cat ~/.l6e/runs.jsonl | python -c "
 import sys, json
 for line in sys.stdin:
     r = json.loads(line)
@@ -98,8 +105,25 @@ for line in sys.stdin:
 "
 ```
 
+### Verify the log path is correct
+
+Run a minimal session to confirm `runs.jsonl` lands in `~/.l6e/` and not somewhere else:
+
+```
+Call l6e_run_start with budget_usd=0.10, model="gpt-4o",
+client="cursor". Then immediately call l6e_run_end with the session_id.
+```
+
+Then check:
+
+```bash
+tail -1 ~/.l6e/runs.jsonl | python -m json.tool
+```
+
+If the file doesn't exist or is empty, `L6E_LOG_PATH` is not being passed to the server process. Re-check the `env` block in your config and restart Cursor.
+
 ## Known limitations
 
 - **Always call `l6e_run_end`.** If the Cursor window closes before `l6e_run_end` is called, the run log for that session is not written.
 - **Never import l6e_mcp directly.** The session registry lives only in the MCP server process. Importing `l6e_mcp.server` in a subprocess will always return "Unknown session".
-- **Reroute requires Ollama.** Rerouting on budget pressure requires a local Ollama model to be available on your machine. If no Ollama model is detected, `l6e_authorize_call` returns `halt` instead of `reroute`.
+- **Rerouting is advisory only.** When `l6e_authorize_call` returns `"action": "reroute"`, the agent stops work and tells you to switch to a cheaper model. The MCP protocol has no mechanism for forcing a model switch — the response is a signal to you, not an automatic redirect.

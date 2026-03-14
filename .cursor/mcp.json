@@ -3,6 +3,7 @@
         "l6e-budget": {
             "command": "l6e-mcp",
             "env": {
+                "L6E_LOG_PATH": "${HOME}/.l6e/runs.jsonl"
             }
         }
     }

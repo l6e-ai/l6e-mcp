@@ -4,7 +4,7 @@ from __future__ import annotations
 import sqlite3
 
 from l6e_mcp.store._connection import make_connection
-from l6e_mcp.store._migrations import _ensure_column, init_schema
+from l6e_mcp.store._migrations import _drop_column, _ensure_column, init_schema
 from l6e_mcp.store.sessions import SessionRepository
 
 
@@ -59,6 +59,79 @@ def test_ensure_column_noops_on_existing(tmp_path):
         _ensure_column(conn, "t", "b", "INTEGER")
         cols = [row["name"] for row in conn.execute("PRAGMA table_info(t)").fetchall()]
     assert cols.count("b") == 1
+
+
+def test_drop_column_removes_existing_column(tmp_path):
+    db = tmp_path / "test.db"
+    with make_connection(db) as conn:
+        conn.execute("CREATE TABLE t (a TEXT, b INTEGER)")
+        _drop_column(conn, "t", "b")
+        cols = {row["name"] for row in conn.execute("PRAGMA table_info(t)").fetchall()}
+    assert "b" not in cols
+    assert "a" in cols
+
+
+def test_drop_column_noops_on_missing_column(tmp_path):
+    db = tmp_path / "test.db"
+    with make_connection(db) as conn:
+        conn.execute("CREATE TABLE t (a TEXT)")
+        _drop_column(conn, "t", "nonexistent")  # must not raise
+        cols = {row["name"] for row in conn.execute("PRAGMA table_info(t)").fetchall()}
+    assert "a" in cols
+
+
+def test_init_schema_drops_proxy_mode_from_old_database(tmp_path):
+    """Old databases with proxy_mode NOT NULL should be migrated on init_schema."""
+    db = tmp_path / "sessions.db"
+    # Simulate an old database schema that still has proxy_mode and advanced_fallback_enabled
+    with make_connection(db) as conn:
+        conn.execute(
+            """
+            CREATE TABLE sessions (
+                session_id TEXT PRIMARY KEY,
+                model TEXT NOT NULL,
+                policy_json TEXT NOT NULL,
+                source TEXT NOT NULL,
+                log_path TEXT,
+                proxy_mode INTEGER NOT NULL,
+                advanced_fallback_enabled INTEGER NOT NULL DEFAULT 0,
+                accounting_mode TEXT NOT NULL DEFAULT 'estimate_only',
+                usage_channel TEXT NOT NULL DEFAULT 'none',
+                ask_mode_exact_capable INTEGER NOT NULL DEFAULT 0,
+                plan_mode_exact_capable INTEGER NOT NULL DEFAULT 0,
+                agent_mode_exact_capable INTEGER NOT NULL DEFAULT 0,
+                state TEXT NOT NULL,
+                next_call_index INTEGER NOT NULL,
+                checkpoint_calls INTEGER NOT NULL DEFAULT 0,
+                status_calls INTEGER NOT NULL DEFAULT 0,
+                created_at REAL NOT NULL,
+                ended_at REAL,
+                finalized_at REAL
+            )
+            """
+        )
+
+    # Running init_schema should apply the drop migrations
+    with make_connection(db) as conn:
+        init_schema(conn)
+
+    # Now sessions can be created without proxy_mode
+    from l6e._types import BudgetMode, PipelinePolicy
+    repo = SessionRepository(db)
+    session = repo.create(
+        session_id="session_cursor_2026-03-14_test1",
+        model="claude-sonnet-4-6",
+        policy=PipelinePolicy(budget=1.0, budget_mode=BudgetMode.WARN),
+        source="mcp",
+        log_path=None,
+    )
+    assert session.session_id == "session_cursor_2026-03-14_test1"
+
+    # Verify proxy_mode column is gone
+    with make_connection(db) as conn:
+        cols = {row["name"] for row in conn.execute("PRAGMA table_info(sessions)").fetchall()}
+    assert "proxy_mode" not in cols
+    assert "advanced_fallback_enabled" not in cols
 
 
 def test_make_connection_enables_wal_without_init_schema(tmp_path):

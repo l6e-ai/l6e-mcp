@@ -2,20 +2,16 @@
 id: windsurf
 title: "Setup: Windsurf"
 sidebar_label: Windsurf
-sidebar_position: 2
+sidebar_position: 4
 ---
 
-Connect the `l6e-budget` MCP server to Windsurf's Cascade for session-scoped budget enforcement.
+Connect the `l6e-budget` MCP server to Windsurf (Cascade) for session-scoped budget enforcement.
 
-## Known issue: Windsurf spawns MCP servers with `cwd=/`
-
-Windsurf runs MCP stdio servers with the working directory set to `/` (filesystem root). This means the default `l6e` run log path `.l6e/runs.jsonl` would resolve to `/.l6e/runs.jsonl`, which is a permission-denied location on most systems.
-
-**You must set the `L6E_LOG_PATH` environment variable** in your Windsurf MCP config to point to an absolute path. See the configuration below.
+This setup uses the estimate-first path. The agent gates calls using pre-call token estimates; call `l6e_record_usage` manually if you want to feed actual token counts back into the ledger for exact accounting.
 
 ## Install
 
-No separate `pip install` is required if you use `uvx` (recommended).
+No separate `pip install` is required if you use `uvx` (recommended). `uvx` runs `l6e-mcp` in an isolated environment on first use.
 
 If you prefer a manual install:
 
@@ -25,7 +21,9 @@ pip install l6e-mcp
 
 ## Configure
 
-Edit `~/.codeium/windsurf/mcp_config.json`. Access it via the MCPs icon in the top-right of the Cascade panel → **Configure**.
+Edit `~/.codeium/windsurf/mcp_config.json`. If the file doesn't exist, create it.
+
+You can also open it through the UI: **Command Palette** (`Cmd+Shift+P`) → `Windsurf: Configure MCP Servers`.
 
 ```json
 {
@@ -34,18 +32,14 @@ Edit `~/.codeium/windsurf/mcp_config.json`. Access it via the MCPs icon in the t
       "command": "uvx",
       "args": ["l6e-mcp"],
       "env": {
-        "L6E_LOG_PATH": "/Users/YOUR_USERNAME/.l6e/runs.jsonl"
+        "L6E_LOG_PATH": "${HOME}/.l6e/runs.jsonl"
       }
     }
   }
 }
 ```
 
-Replace `/Users/YOUR_USERNAME` with your actual home directory path. On macOS you can find it by running `echo $HOME` in a terminal.
-
-:::warning
-Without `L6E_LOG_PATH`, the server attempts to write to `/.l6e/runs.jsonl` (root-relative) which fails silently with a permission error, and your session run data is lost.
-:::
+**`L6E_LOG_PATH` is required.** Windsurf spawns MCP stdio servers with `cwd=/`, so without this env var `runs.jsonl` will be written to `/.l6e/runs.jsonl`, which is typically permission-denied.
 
 If you installed `l6e-mcp` manually instead of using `uvx`:
 
@@ -55,16 +49,18 @@ If you installed `l6e-mcp` manually instead of using `uvx`:
     "l6e-budget": {
       "command": "l6e-mcp",
       "env": {
-        "L6E_LOG_PATH": "/Users/YOUR_USERNAME/.l6e/runs.jsonl"
+        "L6E_LOG_PATH": "${HOME}/.l6e/runs.jsonl"
       }
     }
   }
 }
 ```
 
+**Restart Windsurf completely** after editing this file.
+
 ## Verify
 
-Click the **MCPs** icon in the top-right corner of the Cascade panel. The `l6e-budget` server should appear with its five tools:
+Open the Cascade panel and click the **MCPs** icon in the top-right corner. The `l6e-budget` server should appear with five tools listed:
 
 - `l6e_run_start`
 - `l6e_authorize_call`
@@ -72,43 +68,61 @@ Click the **MCPs** icon in the top-right corner of the Cascade panel. The `l6e-b
 - `l6e_run_status`
 - `l6e_run_end`
 
-To confirm the log path is working, start a session and end it, then check:
+If the server does not appear, check that `uvx` is on your PATH (`which uvx`) or that `l6e-mcp` is installed (`pip show l6e-mcp`).
+
+## Rules for AI
+
+Add the enforcement rule to a Windsurf rules file so Cascade automatically follows the l6e lifecycle.
+
+The rule content is in [`.cursor/rules/l6e-budget-enforcement.mdc`](https://github.com/l6e-ai/l6e-mcp/blob/main/.cursor/rules/l6e-budget-enforcement.mdc) in the repository. Paste it into your Windsurf rules (`Cmd+Shift+P` → `Windsurf: Open Rules`).
+
+## Example conversation starter
+
+Use this at the start of a new chat to test the full flow:
+
+```
+Using the l6e-budget MCP tools, call l6e_run_start with budget_usd=1.00,
+model="gpt-4o", client="windsurf". Show me the full JSON response including
+session_id. Then add a one-line docstring to any function in this project.
+Call l6e_authorize_call before the edit and l6e_run_end when done.
+```
+
+## Reading your run log
+
+After a session ends:
 
 ```bash
-tail -1 ~/.l6e/runs.jsonl
+# Most recent session
+tail -1 ~/.l6e/runs.jsonl | python -m json.tool
+
+# All sessions — cost summary
+cat ~/.l6e/runs.jsonl | python -c "
+import sys, json
+for line in sys.stdin:
+    r = json.loads(line)
+    print(f\"{r['run_id']}  \${r['total_cost']:.4f}  {r['calls_made']} calls  {r['reroutes']} reroutes  source={r['source']}\")
+"
 ```
 
-You should see a JSON object with `"source": "mcp"`.
+### Verify the log path is correct
 
-## Example system prompt
+Run a minimal session to confirm `runs.jsonl` lands in `~/.l6e/` and not somewhere else:
 
-Paste this into your Windsurf rules or at the start of a Cascade conversation:
-
-```text
-l6e-budget MCP tools are available. These are MCP tool calls — never invoke
-them by importing l6e or l6e_mcp in Python.
-
-At the start of EVERY task, call `l6e_run_start`:
-- `budget_usd`: estimated task cost
-- `client`: "windsurf"
-- `model`: exact active billing model ID; if unknown, pass "unknown"
-Store the returned `session_id`.
-
-Sub-agent gate (blocking): call `l6e_authorize_call` with `actor_type="subagent"`
-and get an `allow` before launching ANY sub-agent. No exceptions.
-
-Stage transitions (blocking): call `l6e_authorize_call` at every stage boundary.
-Respect `action`: allow → proceed, reroute → suggest cheaper model, halt → stop.
-
-At the END of every task, call `l6e_run_end` with the `session_id`.
+```
+Call l6e_run_start with budget_usd=0.10, model="gpt-4o",
+client="windsurf". Then immediately call l6e_run_end with the session_id.
 ```
 
-## Where run logs are written
+Then check:
 
-Logs are written to the path you set in `L6E_LOG_PATH`. Using `~/.l6e/runs.jsonl` (absolute path) is recommended — it persists across projects.
+```bash
+tail -1 ~/.l6e/runs.jsonl | python -m json.tool
+```
+
+If the file doesn't exist or is empty, `L6E_LOG_PATH` is not being passed to the server process. Re-check the `env` block in your config and restart Windsurf.
 
 ## Known limitations
 
-- **Always call `l6e_run_end`.** If Cascade ends before `l6e_run_end` is called, the run log is not written.
-- **`L6E_LOG_PATH` is required.** Sessions will run correctly but logs will fail to write if it is not set.
-- **Reroute requires Ollama.** Rerouting on budget pressure requires a local Ollama model to be available on your machine. If no Ollama model is detected, `l6e_authorize_call` returns `halt` instead of `reroute`.
+- **Always call `l6e_run_end`.** If the Windsurf window closes before `l6e_run_end` is called, the run log for that session is not written.
+- **Never import l6e_mcp directly.** The session registry lives only in the MCP server process. Importing `l6e_mcp.server` in a subprocess will always return "Unknown session".
+- **Rerouting is advisory only.** When `l6e_authorize_call` returns `"action": "reroute"`, the agent stops work and tells you to switch to a cheaper model. The MCP protocol has no mechanism for forcing a model switch — the response is a signal to you, not an automatic redirect.

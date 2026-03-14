@@ -41,14 +41,14 @@ If you need genuinely hard enforcement against actual spend, you can call `l6e_r
 
 - Budget gate runs before each tool call via `l6e_authorize_call`
 - Session state is persisted locally in SQLite (`~/.l6e/sessions.db`)
-- Run logs are written to `.l6e/runs.jsonl`
+- Run logs are written to `~/.l6e/runs.jsonl` (set via `L6E_LOG_PATH`)
 - Optional exact reconciliation via `l6e_record_usage` when actual token counts are available
 
 ## Environment variables
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `L6E_LOG_PATH` | `.l6e/runs.jsonl` (relative to cwd) | Override the run log path. **Required for Windsurf; strongly recommended for OpenClaw** — see setup guides. |
+| `L6E_LOG_PATH` | `.l6e/runs.jsonl` (relative to cwd) | Override the run log path. **Required for Windsurf; strongly recommended for Cursor, Claude Code, and OpenClaw** — see setup guides. |
 | `L6E_SESSION_DB_PATH` | `~/.l6e/sessions.db` | Override the local SQLite database path. |
 | `L6E_CALIBRATION_PATH` | _(unset)_ | Path to a JSON calibration file produced by `l6e-calibration-generate`. Requires `L6E_EXPERIMENTAL_DUAL_TOKEN_ESTIMATION=1`. |
 | `L6E_EXPERIMENTAL_DUAL_TOKEN_ESTIMATION` | `0` | Set to `1` to enable per-model token-estimate calibration. Required for `L6E_CALIBRATION_PATH` to take effect. |
@@ -61,7 +61,7 @@ After running a few sessions, you can inspect how your estimates track against a
 l6e-calibration-generate
 ```
 
-This reads your run log (`.l6e/runs.jsonl`) and outputs a per-model calibration JSON file. Point `L6E_CALIBRATION_PATH` at it and set `L6E_EXPERIMENTAL_DUAL_TOKEN_ESTIMATION=1` to have future estimates use the corrected multipliers.
+This reads your run log (`~/.l6e/runs.jsonl`) and outputs a per-model calibration JSON file. Point `L6E_CALIBRATION_PATH` at it and set `L6E_EXPERIMENTAL_DUAL_TOKEN_ESTIMATION=1` to have future estimates use the corrected multipliers.
 
 ## Exactness states
 

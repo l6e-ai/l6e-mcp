@@ -94,6 +94,7 @@ def _savings_confidence_from_run_exactness(state: RunExactnessState) -> str:
 
 
 def _estimator_for_policy(policy: PipelinePolicy):
+    """Return a LiteLLMCostEstimator configured with the policy's unknown-model fallback cost."""
     from l6e.costs import LiteLLMCostEstimator
 
     return LiteLLMCostEstimator(

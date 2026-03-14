@@ -39,7 +39,7 @@ Then follow the setup guide for your editor:
 
 - Budget gate runs before each tool call via `l6e_authorize_call`
 - Session state is persisted locally in SQLite (`~/.l6e/sessions.db`)
-- Run logs are written to `.l6e/runs.jsonl`
+- Run logs are written to `~/.l6e/runs.jsonl` (set via `L6E_LOG_PATH`)
 - Optional exact reconciliation via `l6e_record_usage` when actual token counts are available
 
 ## Running locally without a backend proxy
@@ -56,7 +56,7 @@ That said, it still works. An agent told it has a $2 budget and that it must che
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `L6E_LOG_PATH` | `.l6e/runs.jsonl` (relative to cwd) | Override the run log path. **Required for Windsurf; strongly recommended for OpenClaw.** |
+| `L6E_LOG_PATH` | `.l6e/runs.jsonl` (relative to cwd) | Override the run log path. **Required for Windsurf; strongly recommended for Cursor, Claude Code, and OpenClaw.** |
 | `L6E_SESSION_DB_PATH` | `~/.l6e/sessions.db` | Override the local SQLite database path. |
 | `L6E_CALIBRATION_PATH` | _(unset)_ | Path to a JSON calibration file produced by `l6e-calibration-generate`. Requires `L6E_EXPERIMENTAL_DUAL_TOKEN_ESTIMATION=1`. |
 | `L6E_EXPERIMENTAL_DUAL_TOKEN_ESTIMATION` | `0` | Set to `1` to enable per-model token-estimate calibration. Required for `L6E_CALIBRATION_PATH` to take effect. |

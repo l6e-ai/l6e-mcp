@@ -143,10 +143,27 @@ for line in sys.stdin:
 "
 ```
 
+### Verify the log path is correct
+
+Run a minimal session to confirm `runs.jsonl` lands in `~/.l6e/` and not somewhere else:
+
+```
+Call l6e_run_start with budget_usd=0.10, model="claude-sonnet-4-20250514",
+client="openclaw". Then immediately call l6e_run_end with the session_id.
+```
+
+Then check:
+
+```bash
+tail -1 ~/.l6e/runs.jsonl | python -m json.tool
+```
+
+If the file doesn't exist or is empty, `L6E_LOG_PATH` is not being passed to the server process. Re-check the `env` block in your config and run `openclaw gateway restart`.
+
 ## Known limitations
 
 - **Always call `l6e_run_end`.** If the gateway stops before `l6e_run_end` is called, the run log for that session is not written.
 - **Never import l6e_mcp directly.** The session registry lives only in the MCP server process. Importing `l6e_mcp.server` in a subprocess will always return "Unknown session".
-- **Reroute requires Ollama.** Rerouting on budget pressure requires a local Ollama model to be available on your machine. If no Ollama model is detected, `l6e_authorize_call` returns `halt` instead of `reroute`.
+- **Rerouting is advisory only.** When `l6e_authorize_call` returns `"action": "reroute"`, the agent stops work and tells you to switch to a cheaper model. The MCP protocol has no mechanism for forcing a model switch — the response is a signal to you, not an automatic redirect.
 - **Gateway restart required.** Unlike Cursor, there is no hot-reload for MCP config changes. Run `openclaw gateway restart` after any edit to `mcpServers`.
-- **Adaptive Model Routing.** OpenClaw's `adaptiveRouting` feature (opt-in via `agents.defaults.model.adaptiveRouting`) is complementary to l6e's `reroute`: l6e enforces the cost ceiling, Adaptive Routing handles local-first model selection within it. Both can be active simultaneously.
+- **Adaptive Model Routing.** OpenClaw's `adaptiveRouting` feature (opt-in via `agents.defaults.model.adaptiveRouting`) is complementary to l6e's budget enforcement: l6e signals when the budget ceiling is reached, Adaptive Routing handles local-first model selection independently. Both can be active simultaneously.

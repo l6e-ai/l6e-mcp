@@ -33,14 +33,14 @@ Add to `~/.openclaw/openclaw.json`:
       "args": ["l6e-mcp"],
       "transport": "stdio",
       "env": {
-        "L6E_LOG_PATH": "/Users/YOUR_USERNAME/.l6e/runs.jsonl"
+        "L6E_LOG_PATH": "${HOME}/.l6e/runs.jsonl"
       }
     }
   }
 }
 ```
 
-Replace `/Users/YOUR_USERNAME` with your home directory (`echo $HOME`). Restart the gateway after saving.
+Restart the gateway after saving.
 
 ## Requirements
 

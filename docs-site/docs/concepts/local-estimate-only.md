@@ -14,7 +14,7 @@ This document describes how `l6e-mcp` works when running entirely locally — no
 - A budget gate that fires before expensive operations
 - A local SQLite session store that persists spend across the conversation
 - A run log written to `.l6e/runs.jsonl` at session end
-- `allow`, `reroute`, and `halt` decisions returned to the agent before each call
+- `allow`, `reroute`, and `halt` decisions returned to the agent before each call (`reroute` tells the agent to stop and ask you to switch to a cheaper model)
 
 ## The core limitation: estimates, not actuals
 
@@ -80,7 +80,7 @@ The pre-call gate decision is still based on estimates — the MCP protocol cann
 | What you have | What you don't have |
 |---|---|
 | Budget gate before every call | Real token counts from provider |
-| `allow` / `reroute` / `halt` decisions | Automatic post-call reconciliation |
+| `allow` / `reroute` (advisory) / `halt` decisions | Automatic post-call reconciliation |
 | Local run log for every session | Cross-session calibration without Pro |
 | Session spend visible at any point | Guarantees on estimate accuracy |
 

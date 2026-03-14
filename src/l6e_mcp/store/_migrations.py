@@ -5,6 +5,7 @@ import sqlite3
 
 
 def init_schema(conn: sqlite3.Connection) -> None:
+    """Create all tables and indexes if they do not already exist."""
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS sessions (
@@ -136,6 +137,10 @@ def init_schema(conn: sqlite3.Connection) -> None:
     _ensure_column(conn, "sessions", "agent_mode_exact_capable", "INTEGER NOT NULL DEFAULT 0")
     _ensure_column(conn, "sessions", "checkpoint_calls", "INTEGER NOT NULL DEFAULT 0")
     _ensure_column(conn, "sessions", "status_calls", "INTEGER NOT NULL DEFAULT 0")
+    # Drop columns removed in the proxy_mode/advanced_fallback cleanup so that
+    # existing databases (created before the schema change) can still INSERT rows.
+    _drop_column(conn, "sessions", "proxy_mode")
+    _drop_column(conn, "sessions", "advanced_fallback_enabled")
 
 
 def _ensure_column(
@@ -147,3 +152,12 @@ def _ensure_column(
     }
     if column not in existing:
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+
+
+def _drop_column(conn: sqlite3.Connection, table: str, column: str) -> None:
+    existing = {
+        str(row["name"])
+        for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
+    }
+    if column in existing:
+        conn.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
