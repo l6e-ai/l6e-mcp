@@ -1,0 +1,13 @@
+{
+  "name": "l6e-budget",
+  "tagline": "Per-session cost guardrails for AI coding agents",
+  "description": "l6e-budget gives your OpenClaw agent a hard budget ceiling and a blocking gate before expensive work. Before each stage transition or sub-agent launch, the agent calls `l6e_authorize_call` and gets back `allow`, `reroute`, or `halt` — keeping sessions from silently running up large bills.\n\nThis is the OSS estimate-first path: all accounting is based on token estimates the agent constructs before each call, using live pricing data from litellm. No proxy, no backend required.\n\nBudget state persists in a local SQLite database (`~/.l6e/sessions.db`) and run summaries are flushed to a JSONL log at session end. Designed to work alongside OpenClaw's native Adaptive Model Routing — l6e enforces the cost ceiling while Adaptive Routing handles the local-first optimisation within it.",
+  "category": "development",
+  "tags": ["budget", "cost-control", "ai-agents", "mcp", "llm", "coding-assistant", "enforcement"],
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "pricing": "free",
+  "support_url": "https://github.com/l6e-ai/l6e-mcp/issues",
+  "homepage": "https://github.com/l6e-ai/l6e-mcp",
+  "minOpenClawVersion": "2.0.0"
+}

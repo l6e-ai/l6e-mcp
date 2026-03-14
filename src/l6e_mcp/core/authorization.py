@@ -68,10 +68,8 @@ def authorize_call(
         runtime_store.record_call(call.effective_record())
     gate = ConstraintGate(policy=session.policy, router=LocalRouter())
 
-    use_actual = (
-        actual_prompt_tokens is not None and actual_completion_tokens is not None
-    )
-    if use_actual:
+    if actual_prompt_tokens is not None and actual_completion_tokens is not None:
+        use_actual = True
         prompt_tokens = actual_prompt_tokens
         completion_tokens = actual_completion_tokens
         estimate_source = "actual_tokens"
@@ -80,6 +78,7 @@ def authorize_call(
         estimate_reasoning_tokens = 0
         internal_turns_multiplier = 1.0
     else:
+        use_actual = False
         calibration_enabled = os.environ.get(
             "L6E_EXPERIMENTAL_DUAL_TOKEN_ESTIMATION", ""
         ).strip().lower() in {"1", "true", "yes", "on"}

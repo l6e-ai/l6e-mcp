@@ -35,7 +35,7 @@ def make_connection(path: Path) -> sqlite3.Connection:
         if not short_path.exists():
             short_path.symlink_to(path)
         path = short_path
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(path, timeout=2.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     return conn

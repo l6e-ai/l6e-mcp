@@ -2,10 +2,12 @@
 id: claude-code
 title: "Setup: Claude Code"
 sidebar_label: Claude Code
-sidebar_position: 3
+sidebar_position: 2
 ---
 
 Connect the `l6e-budget` MCP server to Claude Code for session-scoped budget enforcement.
+
+This setup uses the estimate-first path. The agent gates calls using pre-call token estimates; call `l6e_record_usage` manually if you want to feed actual token counts back into the ledger for exact accounting.
 
 ## Install
 
@@ -17,33 +19,60 @@ If you prefer a manual install:
 pip install l6e-mcp
 ```
 
-## Register the server
+## Configure
 
-Run the following command once. It registers `l6e-budget` at **local scope** (visible only to you in the current project):
+Claude Code stores MCP server configurations at two scope levels. Use the CLI (recommended) or write the config file directly.
 
-```bash
-claude mcp add --transport stdio l6e-budget -- uvx l6e-mcp
-```
-
-To use a manual install instead of `uvx`:
+### CLI (recommended)
 
 ```bash
-claude mcp add --transport stdio l6e-budget -- l6e-mcp
+# User scope — available across all projects, stored in ~/.claude.json
+claude mcp add --transport stdio --scope user l6e-budget -- uvx l6e-mcp
+
+# Project scope — checked into .mcp.json, shared with team
+claude mcp add --transport stdio --scope project l6e-budget -- uvx l6e-mcp
 ```
 
-Configuration is stored in `~/.claude.json`. No restart is required for stdio servers.
+If `uvx` is not on the PATH that Claude Code sees, use the full path:
+
+```bash
+which uvx  # then substitute the result
+claude mcp add --transport stdio --scope user l6e-budget -- /full/path/to/uvx l6e-mcp
+```
+
+### Manual config (`mcp.json`)
+
+Claude Code uses `.mcp.json` in the project root (project scope, checked into git) or entries in `~/.claude.json` (user scope). The CLI above writes these files for you, but you can also write them directly.
+
+The `L6E_LOG_PATH` env var is strongly recommended. Claude Code spawns MCP servers as child processes, so without it `runs.jsonl` will be written relative to wherever the Claude Code process started — not your project directory.
+
+```json
+{
+  "mcpServers": {
+    "l6e-budget": {
+      "command": "uvx",
+      "args": ["l6e-mcp"],
+      "env": {
+        "L6E_LOG_PATH": "${HOME:-~}/.l6e/runs.jsonl"
+      }
+    }
+  }
+}
+```
+
+**After adding the config**, restart Claude Code or run `/mcp` to pick up the new server.
+
+On first use of a project-scoped `.mcp.json`, Claude Code will prompt for trust approval — this is expected, approve it.
 
 ## Verify
 
-```bash
-# List registered servers
-claude mcp list
+Run `/mcp` in the interactive REPL, or from the terminal:
 
-# Inside a Claude Code session, check server status
-/mcp
+```bash
+claude mcp list
 ```
 
-The `l6e-budget` server should appear in the `/mcp` output with its five tools:
+The `l6e-budget` server should appear with five tools listed:
 
 - `l6e_run_start`
 - `l6e_authorize_call`
@@ -51,48 +80,50 @@ The `l6e-budget` server should appear in the `/mcp` output with its five tools:
 - `l6e_run_status`
 - `l6e_run_end`
 
-## Example system prompt
+If the server does not appear, check that `uvx` is on your PATH (`which uvx`) or that `l6e-mcp` is installed (`pip show l6e-mcp`).
 
-Paste this into your Claude Code system prompt or at the start of a session:
+## Rules for AI
 
-```text
-l6e-budget MCP tools are available. These are MCP tool calls — never invoke
-them by importing l6e or l6e_mcp in Python.
+Add the enforcement rule to a `CLAUDE.md` file so Claude Code automatically follows the l6e lifecycle.
 
-At the start of EVERY task, call `l6e_run_start`:
-- `budget_usd`: estimated task cost
-- `client`: "claude-code"
-- `model`: exact active billing model ID; if unknown, pass "unknown"
-Store the returned `session_id`.
+- **User-global** (applies to all projects): `~/.claude/CLAUDE.md`
+- **Project-level** (checked into git, shared with team): `CLAUDE.md` or `.claude/CLAUDE.md` in your project root
 
-Sub-agent gate (blocking): call `l6e_authorize_call` with `actor_type="subagent"`
-and get an `allow` before launching ANY sub-agent. No exceptions.
+The rule content is in [`mcp/.claude/CLAUDE.md`](https://github.com/l6e-ai/l6e-mcp/blob/main/.claude/CLAUDE.md) in the repository. Copy its contents into your `CLAUDE.md`.
 
-Stage transitions (blocking): call `l6e_authorize_call` at every stage boundary.
-Respect `action`: allow → proceed, reroute → suggest cheaper model, halt → stop.
+## Example conversation starter
 
-At the END of every task, call `l6e_run_end` with the `session_id`.
+Use this at the start of a new chat to test the full flow:
+
+```
+Using the l6e-budget MCP tools, call l6e_run_start with budget_usd=1.00,
+model="claude-sonnet-4-6", client="claude-code". Show me the full JSON
+response including session_id. Then add a one-line docstring to any function
+in this project. Call l6e_authorize_call before the edit and l6e_run_end
+when done.
 ```
 
-## Scope options
+## Reading your run log
 
-| Scope | Command flag | Stored in |
-|---|---|---|
-| Local (default) | *(omit flag)* | `~/.claude.json` under project path |
-| User (all projects) | `--scope user` | `~/.claude.json` globally |
-| Project (team-shared) | `--scope project` | `.mcp.json` in project root |
-
-To share `l6e-budget` with your whole team, use project scope:
+After a session ends:
 
 ```bash
-claude mcp add --transport stdio --scope project l6e-budget -- uvx l6e-mcp
+# Most recent session
+tail -1 ~/.l6e/runs.jsonl | python -m json.tool
+
+# All sessions — cost summary
+cat ~/.l6e/runs.jsonl | python -c "
+import sys, json
+for line in sys.stdin:
+    r = json.loads(line)
+    print(f\"{r['run_id']}  \${r['total_cost']:.4f}  {r['calls_made']} calls  {r['reroutes']} reroutes  source={r['source']}\")
+"
 ```
-
-## Where run logs are written
-
-By default, logs are written to `.l6e/runs.jsonl` relative to the current working directory when Claude Code invokes the server (typically your project root).
 
 ## Known limitations
 
-- **Always call `l6e_run_end`.** If Claude Code exits before `l6e_run_end` is called, the run log for that session is not written.
+- **Always call `l6e_run_end`.** If the Claude Code process exits before `l6e_run_end` is called, the run log for that session is not written.
+- **Always call `l6e_run_start` at the start of each session.** Claude Code sessions can be resumed with `/resume`, but the MCP server process does not persist across restarts. A resumed session must call `l6e_run_start` again — the previous `session_id` is dead.
+- **Never import l6e_mcp directly.** The session registry lives only in the MCP server process. Importing `l6e_mcp.server` in a subprocess will always return "Unknown session".
 - **Reroute requires Ollama.** Rerouting on budget pressure requires a local Ollama model to be available on your machine. If no Ollama model is detected, `l6e_authorize_call` returns `halt` instead of `reroute`.
+- **`--dangerously-skip-permissions`.** When Claude Code is launched with this flag, MCP tool approval prompts are bypassed. This is harmless for l6e — l6e does not require user approval to function — but be aware of this if you use that flag in CI or scripted environments.
