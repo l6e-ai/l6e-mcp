@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from l6e._types import (
@@ -149,7 +150,7 @@ def _call_from_row(row: sqlite3.Row) -> CallState:
         model_used=str(row["model_used"]),
         estimated_prompt_tokens=int(row["estimated_prompt_tokens"]),
         estimated_completion_tokens=int(row["estimated_completion_tokens"]),
-        estimated_cost_usd=float(row["estimated_cost_usd"]),
+        estimated_cost_usd=Decimal(str(row["estimated_cost_usd"])),
         actual_prompt_tokens=(
             int(row["actual_prompt_tokens"])
             if row["actual_prompt_tokens"] is not None
@@ -161,7 +162,7 @@ def _call_from_row(row: sqlite3.Row) -> CallState:
             else None
         ),
         actual_cost_usd=(
-            float(row["actual_cost_usd"]) if row["actual_cost_usd"] is not None else None
+            Decimal(str(row["actual_cost_usd"])) if row["actual_cost_usd"] is not None else None
         ),
         rerouted=bool(row["rerouted"]),
         elapsed_ms=float(row["elapsed_ms"]),

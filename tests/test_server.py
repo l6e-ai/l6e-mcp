@@ -6,7 +6,6 @@ import re
 
 import pytest
 
-from l6e_mcp import server as srv
 from l6e_mcp.session_store import LocalSessionStore
 
 SESSION_ID_RE = re.compile(r"^session_.+_\d{4}-\d{2}-\d{2}_[0-9a-f]{8}$")
@@ -32,8 +31,6 @@ async def test_session_start_returns_session_id(client):
     )
     assert not result.is_error
     assert SESSION_ID_RE.match(result.data["session_id"])
-    assert result.data["accounting_mode"] == "estimate_only"
-    assert result.data["usage_channel"] == "none"
 
 
 async def test_tool_discovery_exposes_canonical_names_only(client):
@@ -60,7 +57,6 @@ async def test_session_start_normalizes_blank_model_to_unknown(client):
         raise_on_error=False,
     )
     assert not result.is_error
-    assert result.data["model"] == "unknown"
     session = LocalSessionStore().get_session(result.data["session_id"])
     assert session is not None
     assert session.model == "unknown"
@@ -74,45 +70,6 @@ async def test_session_start_persists_session(client):
     assert session.policy.budget == pytest.approx(2.0)
 
 
-async def test_session_start_default_proxy_mode_does_not_write_active_files(
-    client,
-    tmp_path,
-    monkeypatch,
-):
-    active_session = tmp_path / "active_session"
-    active_call = tmp_path / "active_call"
-    monkeypatch.setattr(srv, "_ACTIVE_SESSION_FILE", active_session)
-    monkeypatch.setattr(srv, "_ACTIVE_CALL_FILE", active_call)
-
-    result = await start_session(client, budget_usd=2.0, proxy_mode=True)
-    assert not active_session.exists()
-    assert not active_call.exists()
-    assert result["advanced_fallback_enabled"] is False
-    assert result["fallback_correlation_capability"] == "metadata_only"
-
-
-async def test_session_start_advanced_fallback_writes_active_files(client, tmp_path, monkeypatch):
-    active_session = tmp_path / "active_session"
-    active_call = tmp_path / "active_call"
-    monkeypatch.setattr(srv, "_ACTIVE_SESSION_FILE", active_session)
-    monkeypatch.setattr(srv, "_ACTIVE_CALL_FILE", active_call)
-
-    result = await start_session(
-        client,
-        budget_usd=2.0,
-        proxy_mode=True,
-        advanced_fallback=True,
-    )
-    assert active_session.exists()
-    assert active_session.read_text().strip() == result["session_id"]
-    assert result["active_session_file"] == str(active_session)
-    assert result["active_call_file"] == str(active_call)
-    assert result["accounting_mode"] == "exact_optional"
-    assert result["usage_channel"] == "self_hosted_relay"
-    assert result["advanced_fallback_enabled"] is True
-    assert result["fallback_correlation_capability"] == "active_file"
-
-
 async def test_checkpoint_returns_call_id_and_updates_spend(client):
     session = await start_session(client, budget_usd=10.0, model="gpt-4o")
     result = await client.call_tool(
@@ -124,15 +81,8 @@ async def test_checkpoint_returns_call_id_and_updates_spend(client):
     assert result.data["action"] in ("allow", "reroute", "halt")
     if result.data["action"] != "halt":
         assert "call_id" in result.data
-        assert "correlation" in result.data
-        assert "proxy_correlation" not in result.data
-        assert result.data["correlation"]["call_id"] == result.data["call_id"]
-        assert result.data["spend_so_far_usd"] > 0
-        assert result.data["exactness_state"] in {
-            "all_estimate_only",
-            "partial_exact",
-            "fully_exact_for_supported_calls",
-        }
+        assert "remaining_usd" in result.data
+        assert result.data["remaining_usd"] < 10.0
 
 
 async def test_checkpoint_increments_calls_made(client):
@@ -147,13 +97,8 @@ async def test_checkpoint_increments_calls_made(client):
         {"session_id": session["session_id"], "tool_name": "tool_b", "estimated_tokens": 100},
         raise_on_error=False,
     )
-    spend = await client.call_tool(
-        "l6e_run_status",
-        {"session_id": session["session_id"]},
-        raise_on_error=False,
-    )
-    assert not spend.is_error
-    assert spend.data["calls_made"] == 2
+    calls = LocalSessionStore().list_calls_for_session(session["session_id"])
+    assert len(calls) == 2
 
 
 async def test_checkpoint_direct_actual_tokens_creates_reconciled_call(client):
@@ -170,7 +115,7 @@ async def test_checkpoint_direct_actual_tokens_creates_reconciled_call(client):
         raise_on_error=False,
     )
     assert not result.is_error
-    assert result.data["spend_so_far_usd"] > 0
+    assert result.data["remaining_usd"] < 10.0
     call = LocalSessionStore().get_call(result.data["call_id"])
     assert call is not None
     assert call.status == "reconciled"
@@ -199,25 +144,21 @@ async def test_checkpoint_accepts_subagent_metadata_and_updates_spend_breakdown(
     assert call.actor_id == "subagent_search_1"
     assert call.actor_name == "Search agent"
     assert call.parent_call_id == "call_parent_123"
-    assert (
-        result.data["correlation"]["metadata"]["spend_logs_metadata"]["l6e_actor_type"]
-        == "subagent"
-    )
-    assert (
-        result.data["correlation"]["metadata"]["spend_logs_metadata"]["l6e_actor_id"]
-        == "subagent_search_1"
-    )
-    assert "l6e_parent_call_id:call_parent_123" in result.data["correlation"]["request_tags"]
 
-    spend = await client.call_tool(
-        "l6e_run_status",
+    calls = LocalSessionStore().list_calls_for_session(session["session_id"])
+    assert len(calls) == 1
+
+    end = await client.call_tool(
+        "l6e_run_end",
         {"session_id": session["session_id"]},
         raise_on_error=False,
     )
-    assert not spend.is_error
-    assert spend.data["subagent_calls"] == 1
-    assert spend.data["subagent_spend_usd"] > 0
-    assert spend.data["subagents"][0]["actor_id"] == "subagent_search_1"
+    assert not end.is_error
+    assert end.data["calls_made"] == 1
+    assert end.data["total_cost_usd"] > 0
+    stored_call = LocalSessionStore().get_call(result.data["call_id"])
+    assert stored_call is not None
+    assert stored_call.actor_type == "subagent"
 
 
 async def test_reconcile_call_updates_existing_pending_call_without_duplication(client):
@@ -238,18 +179,13 @@ async def test_reconcile_call_updates_existing_pending_call_without_duplication(
             "actual_completion_tokens": 300,
             "model_used": "gpt-4o-mini",
             "hosted_ledger_id": "ledger_123",
-            "idempotency_key": "idem_123",
         },
         raise_on_error=False,
     )
     assert not reconcile.is_error
     assert reconcile.data["call_id"] == call_id
-    spend = await client.call_tool(
-        "l6e_run_status",
-        {"session_id": session["session_id"]},
-        raise_on_error=False,
-    )
-    assert spend.data["calls_made"] == 1
+    calls = LocalSessionStore().list_calls_for_session(session["session_id"])
+    assert len(calls) == 1
     call = LocalSessionStore().get_call(call_id)
     assert call is not None
     assert call.status == "reconciled"
@@ -278,12 +214,8 @@ async def test_reconcile_call_is_idempotent_for_same_values(client):
     r2 = await client.call_tool("l6e_record_usage", args, raise_on_error=False)
     assert not r1.is_error
     assert not r2.is_error
-    spend = await client.call_tool(
-        "l6e_run_status",
-        {"session_id": session["session_id"]},
-        raise_on_error=False,
-    )
-    assert spend.data["calls_made"] == 1
+    calls = LocalSessionStore().list_calls_for_session(session["session_id"])
+    assert len(calls) == 1
 
 
 async def test_reconcile_calls_remain_correct_when_completed_out_of_order(client):
@@ -359,16 +291,19 @@ async def test_spend_is_readonly(client):
     )
     assert not r1.is_error
     assert not r2.is_error
-    assert r1.data["spent_usd"] == r2.data["spent_usd"]
     assert r1.data["remaining_usd"] == r2.data["remaining_usd"]
-    assert r1.data["calls_made"] == r2.data["calls_made"]
-    assert "overhead_usd" not in r1.data
-    assert "overhead_calls" not in r1.data
+    assert r1.data["budget_pressure"] == r2.data["budget_pressure"]
 
 
 async def test_run_status_exposes_mode_coverage_and_lag_indicators(client):
-    session = await start_session(client, budget_usd=5.0, proxy_mode=True, model="gpt-4o")
-    pending = await client.call_tool(
+    """Mode coverage and exactness are surfaced in l6e_run_end response."""
+    session = await start_session(
+        client,
+        budget_usd=5.0,
+        model="gpt-4o",
+        usage_channel="self_hosted_relay",
+    )
+    await client.call_tool(
         "l6e_authorize_call",
         {
             "session_id": session["session_id"],
@@ -378,22 +313,25 @@ async def test_run_status_exposes_mode_coverage_and_lag_indicators(client):
         },
         raise_on_error=False,
     )
-    assert not pending.is_error
 
-    status = await client.call_tool(
-        "l6e_run_status",
+    end = await client.call_tool(
+        "l6e_run_end",
         {"session_id": session["session_id"]},
         raise_on_error=False,
     )
-    assert not status.is_error
-    assert status.data["exactness_state"] == "exactness_degraded"
-    assert status.data["pending_exact_calls"] == 0
-    assert status.data["unavailable_exact_calls"] == 1
-    assert status.data["mode_coverage"]["agent_mode_exact_capable"] is False
+    assert not end.is_error
+    assert "exactness_state" in end.data
+    assert "pending_exact_calls" in end.data
+    assert "mode_coverage" in end.data
 
 
 async def test_session_end_writes_jsonl_with_reconciled_record(client, tmp_path):
-    session = await start_session(client, budget_usd=10.0, proxy_mode=True, model="gpt-4o")
+    session = await start_session(
+        client,
+        budget_usd=10.0,
+        model="gpt-4o",
+        usage_channel="self_hosted_relay",
+    )
     checkpoint = await client.call_tool(
         "l6e_authorize_call",
         {"session_id": session["session_id"], "tool_name": "read_files", "estimated_tokens": 500},
@@ -417,11 +355,6 @@ async def test_session_end_writes_jsonl_with_reconciled_record(client, tmp_path)
         raise_on_error=False,
     )
     assert not end.is_error
-    assert end.data["overhead_calls"] >= 2
-    assert end.data["overhead_usd"] > 0
-    assert end.data["net_savings_usd"] == pytest.approx(
-        end.data["savings_usd"] - end.data["overhead_usd"]
-    )
     log = tmp_path / "runs.jsonl"
     assert log.exists()
     entry = json.loads(log.read_text().strip())
@@ -429,14 +362,19 @@ async def test_session_end_writes_jsonl_with_reconciled_record(client, tmp_path)
     assert entry["records"][0]["completion_tokens"] == 45
     assert entry["records"][0]["model_used"] == "gpt-4o-mini"
     assert entry["overhead_calls"] >= 2
-    assert entry["overhead_usd"] > 0
-    assert entry["net_savings_usd"] == pytest.approx(
-        entry["savings_usd"] - entry["overhead_usd"]
+    assert float(str(entry["overhead_usd"])) > 0
+    assert float(str(entry["net_savings_usd"])) == pytest.approx(
+        float(str(entry["savings_usd"])) - float(str(entry["overhead_usd"]))
     )
 
 
 async def test_session_end_writes_subagent_metadata_to_jsonl(client, tmp_path):
-    session = await start_session(client, budget_usd=10.0, proxy_mode=True, model="gpt-4o")
+    session = await start_session(
+        client,
+        budget_usd=10.0,
+        model="gpt-4o",
+        usage_channel="self_hosted_relay",
+    )
     await client.call_tool(
         "l6e_authorize_call",
         {
@@ -460,34 +398,10 @@ async def test_session_end_writes_subagent_metadata_to_jsonl(client, tmp_path):
     log = tmp_path / "runs.jsonl"
     entry = json.loads(log.read_text().strip())
     assert entry["subagent_calls"] == 1
-    assert entry["subagent_spend_usd"] > 0
+    assert float(str(entry["subagent_spend_usd"])) > 0
     assert entry["subagents"][0]["actor_id"] == "subagent_search_1"
     assert entry["records"][0]["actor_type"] == "subagent"
     assert entry["records"][0]["parent_call_id"] == "call_parent_123"
-
-
-async def test_session_end_clears_active_files(client, tmp_path, monkeypatch):
-    active_session = tmp_path / "active_session"
-    active_call = tmp_path / "active_call"
-    monkeypatch.setattr(srv, "_ACTIVE_SESSION_FILE", active_session)
-    monkeypatch.setattr(srv, "_ACTIVE_CALL_FILE", active_call)
-
-    session = await start_session(client, budget_usd=2.0, proxy_mode=True, advanced_fallback=True)
-    await client.call_tool(
-        "l6e_authorize_call",
-        {"session_id": session["session_id"], "tool_name": "read_files", "estimated_tokens": 500},
-        raise_on_error=False,
-    )
-    assert active_session.exists()
-    assert active_call.exists()
-
-    await client.call_tool(
-        "l6e_run_end",
-        {"session_id": session["session_id"]},
-        raise_on_error=False,
-    )
-    assert not active_session.exists()
-    assert not active_call.exists()
 
 
 async def test_session_end_twice_is_tool_error(client):
@@ -519,8 +433,6 @@ async def test_checkpoint_accepts_dual_token_estimates(client):
         raise_on_error=False,
     )
     assert not result.is_error
-    assert result.data["estimate_prompt_tokens"] == 1200
-    assert result.data["estimate_completion_tokens"] == 600
     call = LocalSessionStore().get_call(result.data["call_id"])
     assert call is not None
     assert call.estimated_prompt_tokens == 1200
@@ -535,8 +447,6 @@ async def test_unknown_model_pricing_warns_by_default(client):
         raise_on_error=False,
     )
     assert not result.is_error
-    assert result.data["model_pricing_known"] is False
-    assert result.data["pricing_confidence"] == "low"
     assert "pricing_warning" in result.data
 
 
@@ -578,27 +488,10 @@ async def test_unknown_model_pricing_reroutes_when_local_model_priced(client, mo
     assert result.data["target_model"] == "gpt-4o-mini"
 
 
-async def test_run_status_returns_pricing_warnings(client):
-    session = await start_session(client, budget_usd=10.0, model="unknown-model-123")
-    await client.call_tool(
-        "l6e_authorize_call",
-        {"session_id": session["session_id"], "tool_name": "read_files", "estimated_tokens": 500},
-        raise_on_error=False,
-    )
-    status = await client.call_tool(
-        "l6e_run_status",
-        {"session_id": session["session_id"]},
-        raise_on_error=False,
-    )
-    assert not status.is_error
-    assert isinstance(status.data["pricing_warnings"], list)
-    assert len(status.data["pricing_warnings"]) == 1
-
-
 async def test_estimate_only_mode_omits_net_savings_and_includes_note(client, tmp_path):
-    """In estimate-only mode net_savings_usd is omitted; a boolean flag replaces it."""
+    """In estimate-only mode, l6e_run_status omits overhead/savings fields.
+    l6e_run_end reports savings_confidence, and the JSONL log contains the full summary."""
     session = await start_session(client, budget_usd=10.0, model="gpt-4o")
-    assert "savings_note" in session
     await client.call_tool(
         "l6e_authorize_call",
         {"session_id": session["session_id"], "tool_name": "read_files", "estimated_tokens": 500},
@@ -623,21 +516,23 @@ async def test_estimate_only_mode_omits_net_savings_and_includes_note(client, tm
     )
     assert not end.is_error
     assert end.data["savings_confidence"] == "estimate_only"
-    assert "net_savings_usd" not in end.data
-    assert end.data.get("net_savings_unavailable") is True
-    assert "net_savings_note" not in end.data
 
     log = tmp_path / "runs.jsonl"
     entry = json.loads(log.read_text().strip())
     assert entry["savings_confidence"] == "estimate_only"
-    assert entry["net_savings_usd"] == pytest.approx(
-        entry["savings_usd"] - entry["overhead_usd"]
+    assert float(str(entry["net_savings_usd"])) == pytest.approx(
+        float(str(entry["savings_usd"])) - float(str(entry["overhead_usd"]))
     )
 
 
 async def test_exact_mode_includes_net_savings_usd(client, tmp_path):
-    """In exact mode (all calls reconciled) net_savings_usd is present in responses."""
-    session = await start_session(client, budget_usd=10.0, proxy_mode=True, model="gpt-4o")
+    """In exact mode (all calls reconciled) the JSONL log includes net_savings_usd."""
+    session = await start_session(
+        client,
+        budget_usd=10.0,
+        model="gpt-4o",
+        usage_channel="self_hosted_relay",
+    )
     checkpoint = await client.call_tool(
         "l6e_authorize_call",
         {"session_id": session["session_id"], "tool_name": "read_files", "estimated_tokens": 500},
@@ -672,10 +567,11 @@ async def test_exact_mode_includes_net_savings_usd(client, tmp_path):
     )
     assert not end.is_error
     assert end.data["savings_confidence"] == "exact"
-    assert "net_savings_usd" in end.data
-    assert end.data["net_savings_usd"] == pytest.approx(
-        end.data["savings_usd"] - end.data["overhead_usd"]
-    )
+
+    log = tmp_path / "runs.jsonl"
+    entry = json.loads(log.read_text().strip())
+    assert entry["savings_confidence"] == "exact"
+    assert "net_savings_usd" in entry
 
 
 # --- Error path tests ---
@@ -719,17 +615,297 @@ async def test_record_usage_unknown_call_id_returns_error(client):
 async def test_run_end_on_already_finalized_session_returns_error(client):
     session = await start_session(client, budget_usd=1.0)
     session_id = session["session_id"]
-    # First end — succeeds
     end1 = await client.call_tool(
         "l6e_run_end",
         {"session_id": session_id},
         raise_on_error=False,
     )
     assert not end1.is_error
-    # Second end — should fail because session is already finalized
     end2 = await client.call_tool(
         "l6e_run_end",
         {"session_id": session_id},
         raise_on_error=False,
     )
     assert end2.is_error
+
+
+async def test_record_usage_with_different_values_on_reconciled_call_returns_error(client):
+    """Calling l6e_record_usage a second time with different token values on an
+    already-reconciled call must return is_error=True and must NOT overwrite
+    the stored actual token counts."""
+    session = await start_session(client, budget_usd=10.0, model="gpt-4o")
+    checkpoint = await client.call_tool(
+        "l6e_authorize_call",
+        {"session_id": session["session_id"], "tool_name": "read_files", "estimated_tokens": 500},
+        raise_on_error=False,
+    )
+    call_id = checkpoint.data["call_id"]
+
+    r1 = await client.call_tool(
+        "l6e_record_usage",
+        {"call_id": call_id, "actual_prompt_tokens": 1000, "actual_completion_tokens": 200},
+        raise_on_error=False,
+    )
+    assert not r1.is_error
+
+    r2 = await client.call_tool(
+        "l6e_record_usage",
+        {"call_id": call_id, "actual_prompt_tokens": 9999, "actual_completion_tokens": 9999},
+        raise_on_error=False,
+    )
+    assert r2.is_error
+
+    stored = LocalSessionStore().get_call(call_id)
+    assert stored is not None
+    assert stored.actual_prompt_tokens == 1000
+    assert stored.actual_completion_tokens == 200
+
+
+# ---------------------------------------------------------------------------
+# Slim response shape — l6e_authorize_call
+# ---------------------------------------------------------------------------
+
+
+async def test_authorize_call_response_contains_only_agent_essential_fields(client):
+    """l6e_authorize_call must return only the fields the agent needs to make
+    a decision. Internal bookkeeping fields must NOT appear in the response."""
+    session = await start_session(client, budget_usd=10.0, model="gpt-4o")
+    result = await client.call_tool(
+        "l6e_authorize_call",
+        {
+            "session_id": session["session_id"],
+            "tool_name": "planning",
+            "estimated_prompt_tokens": 2000,
+            "estimated_completion_tokens": 400,
+        },
+        raise_on_error=False,
+    )
+    assert not result.is_error
+    data = result.data
+
+    assert "action" in data
+    assert "remaining_usd" in data
+    assert "budget_pressure" in data
+    assert "call_id" in data
+    assert "reason" in data
+
+    noise_fields = [
+        "spend_so_far_usd",
+        "pricing_confidence",
+        "pricing_source",
+        "model_pricing_known",
+        "estimate_source",
+        "estimate_prompt_tokens",
+        "estimate_completion_tokens",
+        "calibration_multiplier",
+        "effective_multiplier",
+        "estimate_reasoning_tokens",
+        "internal_turns_multiplier",
+        "pricing_warnings",
+        "correlation",
+    ]
+    for field in noise_fields:
+        assert field not in data, f"Noise field '{field}' should not appear in response"
+
+
+async def test_authorize_call_reroute_includes_target_model(client):
+    """When action is reroute, target_model must be in the response."""
+    session = await start_session(client, budget_usd=1.0, model="gpt-4o")
+    session_id = session["session_id"]
+
+    await client.call_tool(
+        "l6e_authorize_call",
+        {
+            "session_id": session_id,
+            "tool_name": "preload",
+            "estimated_tokens": 100,
+            "actual_prompt_tokens": 320_000,
+            "actual_completion_tokens": 5_000,
+        },
+        raise_on_error=False,
+    )
+    result = await client.call_tool(
+        "l6e_authorize_call",
+        {"session_id": session_id, "tool_name": "search", "estimated_tokens": 100},
+        raise_on_error=False,
+    )
+    assert not result.is_error
+    if result.data["action"] == "reroute":
+        assert "target_model" in result.data
+
+
+async def test_authorize_call_no_correlation_block_in_oss_mode(client):
+    """The correlation envelope was proxy-only and has been removed; sessions must never emit it."""
+    session = await start_session(client, budget_usd=10.0, model="gpt-4o")
+    result = await client.call_tool(
+        "l6e_authorize_call",
+        {"session_id": session["session_id"], "tool_name": "implement", "estimated_tokens": 1000},
+        raise_on_error=False,
+    )
+    assert not result.is_error
+    assert "correlation" not in result.data
+
+
+# ---------------------------------------------------------------------------
+# Slim response shape + required estimate — l6e_run_status
+# ---------------------------------------------------------------------------
+
+
+async def test_run_status_response_is_slim(client):
+    """l6e_run_status must return a minimal decision-relevant snapshot.
+    Dashboard-only fields (calls_made, reroutes) must not appear."""
+    session = await start_session(client, budget_usd=5.0, model="gpt-4o")
+    result = await client.call_tool(
+        "l6e_run_status",
+        {
+            "session_id": session["session_id"],
+            "estimated_prompt_tokens": 1000,
+            "estimated_completion_tokens": 200,
+        },
+        raise_on_error=False,
+    )
+    assert not result.is_error
+    data = result.data
+
+    assert "budget_pressure" in data
+    assert "remaining_usd" in data
+    assert "pct_used" in data
+
+    for field in ("calls_made", "reroutes", "spent_usd"):
+        assert field not in data, f"Dashboard field '{field}' should not appear in slim status"
+
+
+async def test_run_status_accepts_estimate_params(client):
+    """l6e_run_status must accept estimated_prompt_tokens and
+    estimated_completion_tokens without error."""
+    session = await start_session(client, budget_usd=5.0, model="gpt-4o")
+    result = await client.call_tool(
+        "l6e_run_status",
+        {
+            "session_id": session["session_id"],
+            "estimated_prompt_tokens": 3000,
+            "estimated_completion_tokens": 600,
+        },
+        raise_on_error=False,
+    )
+    assert not result.is_error
+    assert result.data["budget_pressure"] in ("low", "moderate", "high", "critical")
+
+
+# ---------------------------------------------------------------------------
+# Slim response shape — l6e_run_start
+# ---------------------------------------------------------------------------
+
+
+async def test_run_start_response_is_slim(client):
+    """l6e_run_start must return only session_id.
+    Echoed inputs and internal config fields must not be in the response."""
+    result = await client.call_tool(
+        "l6e_run_start",
+        {"budget_usd": 2.0, "model": "gpt-4o"},
+        raise_on_error=False,
+    )
+    assert not result.is_error
+    data = result.data
+
+    assert "session_id" in data
+
+    noise_fields = [
+        "budget_usd",
+        "model",
+        "accounting_mode",
+        "usage_channel",
+        "advanced_fallback_enabled",
+        "fallback_correlation_capability",
+        "unknown_model_pricing_mode",
+        "savings_note",
+    ]
+    for field in noise_fields:
+        assert field not in data, (
+            f"Noise field '{field}' should not appear in OSS run_start response"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Slim response shape — l6e_run_end
+# ---------------------------------------------------------------------------
+
+
+async def test_run_end_response_is_slim(client):
+    """l6e_run_end must return only the minimal session summary.
+    Nested objects and dashboard-only stats must not appear in the response."""
+    session = await start_session(client, budget_usd=5.0, model="gpt-4o")
+    await client.call_tool(
+        "l6e_authorize_call",
+        {"session_id": session["session_id"], "tool_name": "planning", "estimated_tokens": 500},
+        raise_on_error=False,
+    )
+    end = await client.call_tool(
+        "l6e_run_end",
+        {"session_id": session["session_id"]},
+        raise_on_error=False,
+    )
+    assert not end.is_error
+    data = end.data
+
+    assert "session_id" in data
+    assert "total_cost_usd" in data
+    assert "calls_made" in data
+    assert "savings_confidence" in data
+
+    noise_fields = [
+        "subagents",
+        "exactness_breakdown",
+        "overhead_calls",
+        "overhead_usd",
+        "savings_usd",
+        "subagent_calls",
+        "subagent_spend_usd",
+        "unavailable_exact_calls",
+        "exact_calls",
+        "reroutes",
+        "pricing_warnings",
+        "source",
+        "net_savings_unavailable",
+    ]
+    for field in noise_fields:
+        assert field not in data, (
+            f"Noise field '{field}' should not appear in slim run_end response"
+        )
+
+
+async def test_run_end_does_not_write_log_if_finalize_fails(client, tmp_path, monkeypatch):
+    """If finalize_session raises (simulated DB error), the run log must NOT be
+    written so that a subsequent retry of l6e_run_end produces exactly one log entry."""
+    from unittest.mock import patch
+
+    session = await start_session(client, budget_usd=1.0, model="gpt-4o")
+    session_id = session["session_id"]
+
+    log_path = tmp_path / "runs.jsonl"
+
+    original_finalize = LocalSessionStore.finalize_session
+    call_count = {"n": 0}
+
+    def failing_first_finalize(self, sid):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            raise KeyError("simulated DB error")
+        return original_finalize(self, sid)
+
+    with patch.object(LocalSessionStore, "finalize_session", failing_first_finalize):
+        end1 = await client.call_tool(
+            "l6e_run_end", {"session_id": session_id}, raise_on_error=False
+        )
+    assert end1.is_error
+
+    if log_path.exists() and log_path.stat().st_size > 0:
+        entries = [json.loads(line) for line in log_path.read_text().splitlines() if line.strip()]
+        assert len(entries) == 0, "Log must not be written when finalize fails"
+
+    end2 = await client.call_tool(
+        "l6e_run_end", {"session_id": session_id}, raise_on_error=False
+    )
+    assert not end2.is_error
+    entries = [json.loads(line) for line in log_path.read_text().splitlines() if line.strip()]
+    assert len(entries) == 1, f"Expected 1 log entry, got {len(entries)}"

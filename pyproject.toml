@@ -7,7 +7,7 @@ license = "Apache-2.0"
 license-files = ["LICEN[CS]E*"]
 requires-python = ">=3.11"
 dependencies = [
-    "l6e>=0.1.6",
+    "l6e>=0.2.0",
     "fastmcp>=3.0,<4",
 ]
 

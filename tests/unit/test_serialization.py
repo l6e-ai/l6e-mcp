@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from decimal import Decimal
 
 import pytest
 from l6e._types import BudgetMode, PipelinePolicy, PromptComplexity
@@ -168,9 +169,9 @@ def _make_call_row(overrides: dict | None = None) -> sqlite3.Row:
             call_id TEXT, session_id TEXT, call_index INTEGER, tool_name TEXT,
             model_requested TEXT, model_used TEXT,
             estimated_prompt_tokens INTEGER, estimated_completion_tokens INTEGER,
-            estimated_cost_usd REAL,
+            estimated_cost_usd TEXT,
             actual_prompt_tokens INTEGER, actual_completion_tokens INTEGER,
-            actual_cost_usd REAL,
+            actual_cost_usd TEXT,
             rerouted INTEGER, elapsed_ms REAL, prompt_complexity TEXT,
             is_multi_turn INTEGER, status TEXT, created_at REAL, reconciled_at REAL,
             correlation_key TEXT, correlation_source TEXT,
@@ -191,7 +192,7 @@ def _make_call_row(overrides: dict | None = None) -> sqlite3.Row:
         model_used="gpt-4o",
         estimated_prompt_tokens=500,
         estimated_completion_tokens=200,
-        estimated_cost_usd=0.01,
+        estimated_cost_usd="0.01",
         actual_prompt_tokens=None,
         actual_completion_tokens=None,
         actual_cost_usd=None,
@@ -239,14 +240,14 @@ def test_call_from_row_with_actual_tokens():
     row = _make_call_row({
         "actual_prompt_tokens": 300,
         "actual_completion_tokens": 100,
-        "actual_cost_usd": 0.005,
+        "actual_cost_usd": "0.005",
         "status": "reconciled",
         "exactness_state": "exact_recorded",
     })
     call = _call_from_row(row)
     assert call.actual_prompt_tokens == 300
     assert call.actual_completion_tokens == 100
-    assert call.actual_cost_usd == pytest.approx(0.005)
+    assert call.actual_cost_usd == Decimal("0.005")
 
 
 def test_call_from_row_prompt_complexity():

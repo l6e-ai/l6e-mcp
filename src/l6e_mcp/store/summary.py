@@ -1,6 +1,8 @@
 """Run summary computation: session_run_summary and helpers."""
 from __future__ import annotations
 
+from decimal import Decimal
+
 from l6e._types import CallRecord, PipelinePolicy, RunSummary, SubagentSpend
 
 from l6e_mcp.contracts.exactness import ExactnessState, RunExactnessState
@@ -12,12 +14,12 @@ from l6e_mcp.store.sessions import SessionState
 
 def session_run_summary(session: SessionState, calls: list[CallState]) -> RunSummary:
     estimator = _estimator_for_policy(session.policy)
-    total_cost = 0.0
-    counterfactual_cost = 0.0
+    total_cost = Decimal("0")
+    counterfactual_cost = Decimal("0")
     records: list[CallRecord] = []
     reroutes = 0
     subagent_calls = 0
-    subagent_spend_usd = 0.0
+    subagent_spend_usd = Decimal("0")
     subagent_rollups: dict[str, SubagentSpend] = {}
     for call in calls:
         record = call.effective_record()
@@ -52,7 +54,7 @@ def session_run_summary(session: SessionState, calls: list[CallState]) -> RunSum
             reroutes += 1
         else:
             counterfactual_cost += record.cost_usd
-    savings_usd = max(0.0, counterfactual_cost - total_cost)
+    savings_usd = max(Decimal("0"), counterfactual_cost - total_cost)
     overhead_usd, overhead_calls = estimate_overhead(
         model=session.model,
         estimator=estimator,

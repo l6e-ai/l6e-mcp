@@ -1,6 +1,8 @@
 """Unit tests for CallRepository."""
 from __future__ import annotations
 
+from decimal import Decimal
+
 import pytest
 from l6e._types import BudgetMode, PipelinePolicy
 
@@ -102,7 +104,7 @@ def test_reconcile_call(tmp_path):
     ))
     assert reconciled.actual_prompt_tokens == 400
     assert reconciled.actual_completion_tokens == 150
-    assert reconciled.actual_cost_usd == pytest.approx(0.008)
+    assert reconciled.actual_cost_usd == Decimal("0.008")
 
 
 def test_reconcile_call_with_model_used(tmp_path):
