@@ -4,6 +4,7 @@ from __future__ import annotations
 import secrets
 import time
 from dataclasses import dataclass
+from decimal import Decimal
 from pathlib import Path
 
 from l6e._types import CallRecord, PromptComplexity
@@ -22,7 +23,7 @@ class ReconcileRequest:
     call_id: str
     actual_prompt_tokens: int
     actual_completion_tokens: int
-    actual_cost_usd: float
+    actual_cost_usd: Decimal
     model_used: str | None = None
     callback_request_id: str | None = None
     callback_trace_id: str | None = None
@@ -41,10 +42,10 @@ class CallState:
     model_used: str
     estimated_prompt_tokens: int
     estimated_completion_tokens: int
-    estimated_cost_usd: float
+    estimated_cost_usd: Decimal
     actual_prompt_tokens: int | None
     actual_completion_tokens: int | None
-    actual_cost_usd: float | None
+    actual_cost_usd: Decimal | None
     rerouted: bool
     elapsed_ms: float
     prompt_complexity: PromptComplexity | None
@@ -115,14 +116,14 @@ class CallRepository:
         model_used: str,
         estimated_prompt_tokens: int,
         estimated_completion_tokens: int,
-        estimated_cost_usd: float,
+        estimated_cost_usd: Decimal,
         rerouted: bool,
         elapsed_ms: float = 0.0,
         prompt_complexity: PromptComplexity | None = None,
         is_multi_turn: bool = False,
         actual_prompt_tokens: int | None = None,
         actual_completion_tokens: int | None = None,
-        actual_cost_usd: float | None = None,
+        actual_cost_usd: Decimal | None = None,
         status: str = "pending",
         correlation_key: str | None = None,
         correlation_source: str | None = None,
@@ -205,10 +206,10 @@ class CallRepository:
                     model_used,
                     estimated_prompt_tokens,
                     estimated_completion_tokens,
-                    estimated_cost_usd,
+                    str(estimated_cost_usd),
                     actual_prompt_tokens,
                     actual_completion_tokens,
-                    actual_cost_usd,
+                    str(actual_cost_usd) if actual_cost_usd is not None else None,
                     int(rerouted),
                     elapsed_ms,
                     prompt_complexity.value if prompt_complexity is not None else None,
@@ -313,7 +314,10 @@ class CallRepository:
                 same_values = (
                     row["actual_prompt_tokens"] == request.actual_prompt_tokens
                     and row["actual_completion_tokens"] == request.actual_completion_tokens
-                    and float(row["actual_cost_usd"]) == request.actual_cost_usd
+                    and (
+                        Decimal(str(row["actual_cost_usd"])) == 
+                        Decimal(str(request.actual_cost_usd))
+                    )
                 )
                 if same_values:
                     call = self.get(request.call_id)
@@ -324,64 +328,36 @@ class CallRepository:
                     f"Call '{request.call_id}' is already reconciled with different values. "
                     "Re-reconciliation with different token counts is not allowed."
                 )
-            if request.model_used is None:
-                conn.execute(
-                    """
-                    UPDATE calls
-                    SET actual_prompt_tokens = ?, actual_completion_tokens = ?,
-                        actual_cost_usd = ?, status = 'reconciled', reconciled_at = ?,
-                        callback_request_id = COALESCE(?, callback_request_id),
-                        callback_trace_id = COALESCE(?, callback_trace_id),
-                        correlation_key = COALESCE(?, correlation_key),
-                        correlation_source = COALESCE(?, correlation_source),
-                        exactness_state = ?,
-                        hosted_ledger_id = COALESCE(?, hosted_ledger_id)
-                    WHERE call_id = ?
-                    """,
-                    (
-                        request.actual_prompt_tokens,
-                        request.actual_completion_tokens,
-                        request.actual_cost_usd,
-                        reconciled_at,
-                        request.callback_request_id,
-                        request.callback_trace_id,
-                        request.correlation_key,
-                        request.correlation_source,
-                        ExactnessState.EXACT_RECORDED.value,
-                        request.hosted_ledger_id,
-                        request.call_id,
-                    ),
-                )
-            else:
-                conn.execute(
-                    """
-                    UPDATE calls
-                    SET actual_prompt_tokens = ?, actual_completion_tokens = ?,
-                        actual_cost_usd = ?, model_used = ?, status = 'reconciled',
-                        reconciled_at = ?,
-                        callback_request_id = COALESCE(?, callback_request_id),
-                        callback_trace_id = COALESCE(?, callback_trace_id),
-                        correlation_key = COALESCE(?, correlation_key),
-                        correlation_source = COALESCE(?, correlation_source),
-                        exactness_state = ?,
-                        hosted_ledger_id = COALESCE(?, hosted_ledger_id)
-                    WHERE call_id = ?
-                    """,
-                    (
-                        request.actual_prompt_tokens,
-                        request.actual_completion_tokens,
-                        request.actual_cost_usd,
-                        request.model_used,
-                        reconciled_at,
-                        request.callback_request_id,
-                        request.callback_trace_id,
-                        request.correlation_key,
-                        request.correlation_source,
-                        ExactnessState.EXACT_RECORDED.value,
-                        request.hosted_ledger_id,
-                        request.call_id,
-                    ),
-                )
+            conn.execute(
+                """
+                UPDATE calls
+                SET actual_prompt_tokens = ?, actual_completion_tokens = ?,
+                    actual_cost_usd = ?,
+                    model_used = COALESCE(?, model_used),
+                    status = 'reconciled', reconciled_at = ?,
+                    callback_request_id = COALESCE(?, callback_request_id),
+                    callback_trace_id = COALESCE(?, callback_trace_id),
+                    correlation_key = COALESCE(?, correlation_key),
+                    correlation_source = COALESCE(?, correlation_source),
+                    exactness_state = ?,
+                    hosted_ledger_id = COALESCE(?, hosted_ledger_id)
+                WHERE call_id = ?
+                """,
+                (
+                    request.actual_prompt_tokens,
+                    request.actual_completion_tokens,
+                    str(request.actual_cost_usd),
+                    request.model_used,
+                    reconciled_at,
+                    request.callback_request_id,
+                    request.callback_trace_id,
+                    request.correlation_key,
+                    request.correlation_source,
+                    ExactnessState.EXACT_RECORDED.value,
+                    request.hosted_ledger_id,
+                    request.call_id,
+                ),
+            )
         call = self.get(request.call_id)
         if call is None:
             raise RuntimeError(f"Failed to reconcile call '{request.call_id}'")

@@ -4,6 +4,7 @@ All public method signatures are preserved so server.py and tests require zero c
 """
 from __future__ import annotations
 
+from decimal import Decimal
 from pathlib import Path
 
 from l6e._types import PipelinePolicy, PromptComplexity
@@ -94,14 +95,14 @@ class LocalSessionStore:
         model_used: str,
         estimated_prompt_tokens: int,
         estimated_completion_tokens: int,
-        estimated_cost_usd: float,
+        estimated_cost_usd: Decimal,
         rerouted: bool,
         elapsed_ms: float = 0.0,
         prompt_complexity: PromptComplexity | None = None,
         is_multi_turn: bool = False,
         actual_prompt_tokens: int | None = None,
         actual_completion_tokens: int | None = None,
-        actual_cost_usd: float | None = None,
+        actual_cost_usd: Decimal | None = None,
         status: str = "pending",
         correlation_key: str | None = None,
         correlation_source: str | None = None,

@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import secrets
 from datetime import date
+from decimal import Decimal
 from pathlib import Path
 from typing import Annotated
 
@@ -75,15 +76,15 @@ def _spend_snapshot(session: SessionState) -> dict:
     calls = _get_session_store().list_calls_for_session(session.session_id)
     summary = session_run_summary(session, calls)
     spent = summary.total_cost
-    budget = session.policy.budget
+    budget = Decimal(str(session.policy.budget))
     remaining = budget - spent
-    pct_used = (spent / budget * 100.0) if budget > 0 else 0.0
+    pct_used = (spent / budget * 100) if budget > 0 else Decimal("0")
     return {
-        "spent_usd": round(spent, 6),
-        "remaining_usd": round(remaining, 6),
-        "budget_usd": budget,
-        "budget_pressure": _budget_pressure(pct_used),
-        "pct_used": round(pct_used, 2),
+        "spent_usd": float(round(spent, 6)),
+        "remaining_usd": float(round(remaining, 6)),
+        "budget_usd": session.policy.budget,
+        "budget_pressure": _budget_pressure(float(pct_used)),
+        "pct_used": float(round(pct_used, 2)),
         "calls_made": summary.calls_made,
         "reroutes": summary.reroutes,
     }
@@ -384,7 +385,7 @@ def l6e_run_end(
     ]
     return {
         "session_id": session_id,
-        "total_cost_usd": round(summary.total_cost, 6),
+        "total_cost_usd": float(round(summary.total_cost, 6)),
         "calls_made": summary.calls_made,
         "savings_confidence": summary.savings_confidence,
         "pending_exact_calls": pending_exact_calls,

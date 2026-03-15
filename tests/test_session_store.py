@@ -1,7 +1,8 @@
 """Tests for the local SQLite session store."""
 from __future__ import annotations
 
-import pytest
+from decimal import Decimal
+
 from l6e._types import BudgetMode, PipelinePolicy
 
 from l6e_mcp.session_store import LocalSessionStore, ReconcileRequest, session_run_summary
@@ -48,7 +49,7 @@ def test_session_store_reconciles_existing_call(tmp_path):
     assert summary.records[0].model_used == "gpt-4o-mini"
     assert summary.overhead_calls >= 2
     assert summary.overhead_usd > 0
-    assert summary.net_savings_usd == pytest.approx(summary.savings_usd - summary.overhead_usd)
+    assert summary.net_savings_usd == summary.savings_usd - summary.overhead_usd
     assert summary.savings_confidence == "exact"
 
 
@@ -177,7 +178,7 @@ def test_session_store_persists_subagent_metadata_and_rolls_up_summary(tmp_path)
 
     summary = session_run_summary(session, calls)
     assert summary.subagent_calls == 2
-    assert summary.subagent_spend_usd == pytest.approx(0.3)
+    assert summary.subagent_spend_usd == Decimal("0.3")
     assert len(summary.subagents) == 1
     assert summary.subagents[0].actor_id == "subagent_search_1"
     assert summary.subagents[0].calls_made == 2
