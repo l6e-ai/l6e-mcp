@@ -13,7 +13,7 @@
 | src/l6e\_mcp/contracts/exactness.py             |       12 |        0 |    100% |           |
 | src/l6e\_mcp/contracts/mode\_coverage.py        |       20 |        1 |     95% |        14 |
 | src/l6e\_mcp/core/\_\_init\_\_.py               |        0 |        0 |    100% |           |
-| src/l6e\_mcp/core/authorization.py              |       75 |        3 |     96% |131, 154, 223 |
+| src/l6e\_mcp/core/authorization.py              |       73 |        3 |     96% |126, 149, 218 |
 | src/l6e\_mcp/core/exactness.py                  |       29 |        0 |    100% |           |
 | src/l6e\_mcp/outbox.py                          |       54 |        4 |     93% |73-74, 88-89 |
 | src/l6e\_mcp/overhead.py                        |       18 |        1 |     94% |        32 |
@@ -32,7 +32,7 @@
 | src/l6e\_mcp/tools/\_\_init\_\_.py              |        0 |        0 |    100% |           |
 | src/l6e\_mcp/transport/\_\_init\_\_.py          |        0 |        0 |    100% |           |
 | src/l6e\_mcp/transport/http/\_\_init\_\_.py     |        0 |        0 |    100% |           |
-| **TOTAL**                                       |  **955** |   **50** | **95%** |           |
+| **TOTAL**                                       |  **953** |   **50** | **95%** |           |
 
 
 ## Setup coverage badge
