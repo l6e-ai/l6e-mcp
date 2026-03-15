@@ -58,8 +58,7 @@ That said, it still works. An agent told it has a $2 budget and that it must che
 |---|---|---|
 | `L6E_LOG_PATH` | `.l6e/runs.jsonl` (relative to cwd) | Override the run log path. **Required for Windsurf; strongly recommended for Cursor, Claude Code, and OpenClaw.** |
 | `L6E_SESSION_DB_PATH` | `~/.l6e/sessions.db` | Override the local SQLite database path. |
-| `L6E_CALIBRATION_PATH` | _(unset)_ | Path to a JSON calibration file produced by `l6e-calibration-generate`. Requires `L6E_EXPERIMENTAL_DUAL_TOKEN_ESTIMATION=1`. |
-| `L6E_EXPERIMENTAL_DUAL_TOKEN_ESTIMATION` | `0` | Set to `1` to enable per-model token-estimate calibration. Required for `L6E_CALIBRATION_PATH` to take effect. |
+| `L6E_CALIBRATION_PATH` | _(unset)_ | Path to a JSON calibration file produced by `l6e-calibration-generate`. When set, per-model token-estimate calibration is applied automatically. |
 
 ## Exactness states
 

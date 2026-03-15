@@ -1,7 +1,6 @@
 """Budget authorization service used by MCP checkpoint transport."""
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 
 from l6e.costs import LiteLLMCostEstimator
@@ -10,7 +9,6 @@ from l6e.router import LocalRouter
 from l6e.store import InMemoryRunStore
 
 from l6e_mcp.calibration.config import (
-    CalibrationConfig,
     load_calibration_config,
     resolve_estimated_tokens,
 )
@@ -79,10 +77,7 @@ def authorize_call(
         internal_turns_multiplier = 1.0
     else:
         use_actual = False
-        calibration_enabled = os.environ.get(
-            "L6E_EXPERIMENTAL_DUAL_TOKEN_ESTIMATION", ""
-        ).strip().lower() in {"1", "true", "yes", "on"}
-        calibration = load_calibration_config() if calibration_enabled else CalibrationConfig()
+        calibration = load_calibration_config()
         resolved = resolve_estimated_tokens(
             stage=tool_name,
             model=session.model,
