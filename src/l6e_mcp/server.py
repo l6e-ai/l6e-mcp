@@ -1,8 +1,10 @@
 """l6e-mcp server — session-scoped budget enforcement via FastMCP."""
 from __future__ import annotations
 
+import logging
 import os
 import secrets
+import threading
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -11,9 +13,11 @@ from typing import Annotated
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 from l6e._log import LocalRunLog
-from l6e._types import BudgetMode, PipelinePolicy, UnknownModelPricingMode
+from l6e._types import BudgetMode, PipelinePolicy, RunSummary, UnknownModelPricingMode
 from l6e.costs import LiteLLMCostEstimator
 
+from l6e_mcp import config as _config
+from l6e_mcp import outbox as _outbox
 from l6e_mcp.contracts.exactness import ExactnessState
 from l6e_mcp.core.authorization import authorize_call
 from l6e_mcp.core.exactness import run_exactness_state
@@ -23,6 +27,9 @@ from l6e_mcp.session_store import (
     SessionState,
     session_run_summary,
 )
+from l6e_mcp.store.calls import CallState
+
+_logger = logging.getLogger(__name__)
 
 mcp = FastMCP(
     name="l6e-budget",
@@ -90,6 +97,43 @@ def _spend_snapshot(session: SessionState) -> dict:
     }
 
 
+def _build_session_report(
+    session: SessionState,
+    summary: RunSummary,
+    calls: list[CallState],
+) -> dict:
+    """Serialize a completed session into the POST /v1/session-reports payload."""
+    return {
+        "session_id": session.session_id,
+        "model": session.model,
+        "source": session.source,
+        "total_cost_usd": float(round(summary.total_cost, 8)),
+        "calls_made": summary.calls_made,
+        "reroutes": summary.reroutes,
+        "savings_confidence": summary.savings_confidence,
+        "accounting_mode": session.accounting_mode,
+        "calls": [
+            {
+                "call_id": c.call_id,
+                "tool_name": c.tool_name,
+                "model_requested": c.model_requested,
+                "model_used": c.model_used,
+                "estimated_prompt_tokens": c.estimated_prompt_tokens,
+                "estimated_completion_tokens": c.estimated_completion_tokens,
+                "estimated_cost_usd": float(round(c.estimated_cost_usd, 8)),
+                "actual_prompt_tokens": c.actual_prompt_tokens,
+                "actual_completion_tokens": c.actual_completion_tokens,
+                "actual_cost_usd": (
+                    float(round(c.actual_cost_usd, 8)) if c.actual_cost_usd is not None else None
+                ),
+                "action": "reroute" if c.rerouted else "allow",
+                "actor_type": getattr(c, "actor_type", "parent_agent"),
+            }
+            for c in calls
+        ],
+    }
+
+
 @mcp.tool
 def l6e_run_start(
     budget_usd: Annotated[float, "Hard budget ceiling in USD for this session"],
@@ -151,6 +195,15 @@ def l6e_run_start(
         plan_mode_exact_capable=plan_mode_exact_capable,
         agent_mode_exact_capable=agent_mode_exact_capable,
     )
+
+    api_key = _config.get_api_key()
+    if api_key and _config.is_cloud_sync_enabled():
+        threading.Thread(
+            target=_outbox.drain,
+            args=(api_key, _config.get_cloud_endpoint()),
+            daemon=True,
+        ).start()
+
     return {"session_id": session_id}
 
 
@@ -361,6 +414,14 @@ def l6e_run_end(
     except KeyError as exc:
         raise ToolError(exc.args[0]) from exc
     log.append(summary)
+
+    # Cloud sync: try synchronous POST, fall back to outbox on failure
+    api_key = _config.get_api_key()
+    if api_key and _config.is_cloud_sync_enabled():
+        payload = _build_session_report(session, summary, calls)
+        if not _outbox.try_send(payload, api_key, _config.get_cloud_endpoint()):
+            _outbox.enqueue(payload)
+            _logger.debug("cloud_sync_queued", extra={"session_id": session_id})
 
     call_exactness_states = [ExactnessState(c.exactness_state) for c in calls]
     run_exactness = run_exactness_state(call_exactness_states)
