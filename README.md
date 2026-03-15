@@ -7,6 +7,7 @@
 | src/l6e\_mcp/\_\_init\_\_.py                    |        1 |        0 |    100% |           |
 | src/l6e\_mcp/calibration/\_\_init\_\_.py        |        0 |        0 |    100% |           |
 | src/l6e\_mcp/calibration/config.py              |      101 |        0 |    100% |           |
+| src/l6e\_mcp/config.py                          |       49 |        5 |     90% |32-34, 47-48 |
 | src/l6e\_mcp/contracts/\_\_init\_\_.py          |        0 |        0 |    100% |           |
 | src/l6e\_mcp/contracts/correlation\_envelope.py |       11 |       11 |      0% |      2-18 |
 | src/l6e\_mcp/contracts/exactness.py             |       12 |        0 |    100% |           |
@@ -14,8 +15,9 @@
 | src/l6e\_mcp/core/\_\_init\_\_.py               |        0 |        0 |    100% |           |
 | src/l6e\_mcp/core/authorization.py              |       75 |        3 |     96% |131, 154, 223 |
 | src/l6e\_mcp/core/exactness.py                  |       29 |        0 |    100% |           |
+| src/l6e\_mcp/outbox.py                          |       54 |        4 |     93% |73-74, 88-89 |
 | src/l6e\_mcp/overhead.py                        |       18 |        1 |     94% |        32 |
-| src/l6e\_mcp/server.py                          |      128 |        7 |     95% |61-62, 69, 72, 275, 400, 404 |
+| src/l6e\_mcp/server.py                          |      145 |       13 |     91% |68-69, 76, 79, 106, 201, 328, 421-424, 461, 465 |
 | src/l6e\_mcp/session\_store.py                  |       46 |        3 |     93% |151, 154, 174 |
 | src/l6e\_mcp/store/\_\_init\_\_.py              |        0 |        0 |    100% |           |
 | src/l6e\_mcp/store/\_connection.py              |       26 |        0 |    100% |           |
@@ -30,7 +32,7 @@
 | src/l6e\_mcp/tools/\_\_init\_\_.py              |        0 |        0 |    100% |           |
 | src/l6e\_mcp/transport/\_\_init\_\_.py          |        0 |        0 |    100% |           |
 | src/l6e\_mcp/transport/http/\_\_init\_\_.py     |        0 |        0 |    100% |           |
-| **TOTAL**                                       |  **835** |   **35** | **96%** |           |
+| **TOTAL**                                       |  **955** |   **50** | **95%** |           |
 
 
 ## Setup coverage badge
