@@ -17,7 +17,7 @@
 | src/l6e\_mcp/core/exactness.py                  |       29 |        0 |    100% |           |
 | src/l6e\_mcp/outbox.py                          |       54 |        4 |     93% |73-74, 88-89 |
 | src/l6e\_mcp/overhead.py                        |       18 |        1 |     94% |        32 |
-| src/l6e\_mcp/server.py                          |      145 |       13 |     91% |68-69, 76, 79, 106, 201, 328, 421-424, 461, 465 |
+| src/l6e\_mcp/server.py                          |      145 |       13 |     91% |68-69, 76, 79, 106, 202, 329, 422-425, 462, 466 |
 | src/l6e\_mcp/session\_store.py                  |       46 |        3 |     93% |151, 154, 174 |
 | src/l6e\_mcp/store/\_\_init\_\_.py              |        0 |        0 |    100% |           |
 | src/l6e\_mcp/store/\_connection.py              |       26 |        0 |    100% |           |
