@@ -128,6 +128,7 @@ def _build_session_report(
                 ),
                 "action": "reroute" if c.rerouted else "allow",
                 "actor_type": getattr(c, "actor_type", "parent_agent"),
+                "created_at": c.created_at,
             }
             for c in calls
         ],
