@@ -10,8 +10,12 @@ import logging
 import os
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import httpx
+
+if TYPE_CHECKING:
+    from l6e_mcp.session_store import LocalSessionStore
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +68,11 @@ def try_send(
         return False
 
 
-def drain(api_key: str, endpoint: str) -> None:
+def drain(
+    api_key: str,
+    endpoint: str,
+    deadline: float | None = None,
+) -> None:
     """Drain all pending outbox files. Best-effort: never raises."""
     outbox = _outbox_dir()
     if not outbox.is_dir():
@@ -76,6 +84,9 @@ def drain(api_key: str, endpoint: str) -> None:
 
     now = time.time()
     for path in files:
+        if deadline is not None and time.time() >= deadline:
+            logger.debug("outbox_drain_deadline_reached")
+            break
         try:
             age = now - path.stat().st_mtime
             if age > _STALE_SECONDS:
@@ -84,7 +95,7 @@ def drain(api_key: str, endpoint: str) -> None:
                 continue
 
             payload = json.loads(path.read_text(encoding="utf-8"))
-            if try_send(payload, api_key, endpoint, timeout=5.0):
+            if try_send(payload, api_key, endpoint):
                 path.unlink(missing_ok=True)
         except Exception:
             logger.debug("outbox_drain_item_failed", exc_info=True)
@@ -94,6 +105,8 @@ def recover_stale_sessions(
     api_key: str,
     endpoint: str,
     max_idle_seconds: float = 3600,
+    store: LocalSessionStore | None = None,
+    deadline: float | None = None,
 ) -> None:
     """Finalize stale active sessions and sync recoverable ones to the hosted edge.
 
@@ -110,7 +123,8 @@ def recover_stale_sessions(
     from l6e_mcp.store.summary import build_session_report, session_run_summary
 
     try:
-        store = LocalSessionStore()
+        if store is None:
+            store = LocalSessionStore()
         stale = store.list_stale_active(max_idle_seconds)
     except Exception:
         logger.debug("recover_stale_list_failed", exc_info=True)
@@ -121,6 +135,9 @@ def recover_stale_sessions(
 
     now = time.time()
     for info in stale:
+        if deadline is not None and time.time() >= deadline:
+            logger.debug("recover_stale_deadline_reached")
+            break
         try:
             if info.call_count == 0:
                 store.finalize_session(info.session_id)

@@ -5,6 +5,7 @@ import logging
 import os
 import secrets
 import threading
+import time
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -47,6 +48,8 @@ mcp = FastMCP(
     ),
 )
 
+_BACKGROUND_SYNC_DEADLINE_SECONDS = 30
+
 
 def _make_session_id(client: str = "unknown") -> str:
     token = secrets.token_hex(4)
@@ -58,13 +61,34 @@ def _get_log_path() -> Path | None:
     return Path(raw) if raw else None
 
 
+_store: LocalSessionStore | None = None
+_store_lock = threading.Lock()
+
+
 def _get_session_store() -> LocalSessionStore:
-    return LocalSessionStore()
+    global _store  # noqa: PLW0603
+    if _store is not None:
+        return _store
+    with _store_lock:
+        if _store is not None:
+            return _store
+        _store = LocalSessionStore()
+        return _store
 
 
-def _require_session(session_id: str) -> SessionState:
+def _reset_session_store() -> None:
+    """Clear the cached singleton. Used by tests for isolation."""
+    global _store  # noqa: PLW0603
+    with _store_lock:
+        _store = None
+
+
+def _require_session(
+    session_id: str, store: LocalSessionStore | None = None,
+) -> SessionState:
+    store = store or _get_session_store()
     try:
-        return _get_session_store().require_active_session(session_id)
+        return store.require_active_session(session_id)
     except KeyError as exc:
         raise ToolError(exc.args[0]) from exc
 
@@ -79,8 +103,11 @@ def _budget_pressure(pct_used: float) -> str:
     return "critical"
 
 
-def _spend_snapshot(session: SessionState) -> dict:
-    calls = _get_session_store().list_calls_for_session(session.session_id)
+def _spend_snapshot(
+    session: SessionState, store: LocalSessionStore | None = None,
+) -> dict:
+    store = store or _get_session_store()
+    calls = store.list_calls_for_session(session.session_id)
     summary = session_run_summary(session, calls)
     spent = summary.total_cost
     budget = Decimal(str(session.policy.budget))
@@ -97,7 +124,7 @@ def _spend_snapshot(session: SessionState) -> dict:
     }
 
 
-@mcp.tool
+@mcp.tool(timeout=10)
 def l6e_run_start(
     budget_usd: Annotated[float, "Hard budget ceiling in USD for this session"],
     model: Annotated[str, "Billing model ID for this session"],
@@ -146,7 +173,8 @@ def l6e_run_start(
         unknown_model_pricing_mode=pricing_mode,
     )
     log_path = _get_log_path()
-    _get_session_store().create_session(
+    store = _get_session_store()
+    store.create_session(
         session_id=session_id,
         model=model,
         policy=policy,
@@ -163,20 +191,37 @@ def l6e_run_start(
     if api_key and _config.is_cloud_sync_enabled():
         threading.Thread(
             target=_background_sync,
-            args=(api_key, _config.get_cloud_endpoint()),
+            args=(api_key, _config.get_cloud_endpoint(), store),
             daemon=True,
         ).start()
 
     return {"session_id": session_id}
 
 
-def _background_sync(api_key: str, endpoint: str) -> None:
-    """Drain outbox, then recover any stale sessions. Best-effort."""
-    _outbox.drain(api_key, endpoint)
-    _outbox.recover_stale_sessions(api_key, endpoint)
+def _background_sync(
+    api_key: str, endpoint: str, store: LocalSessionStore | None = None,
+) -> None:
+    """Drain outbox, then recover any stale sessions. Best-effort, time-capped."""
+    deadline = time.time() + _BACKGROUND_SYNC_DEADLINE_SECONDS
+    _outbox.drain(api_key, endpoint, deadline=deadline)
+    if time.time() < deadline:
+        _outbox.recover_stale_sessions(
+            api_key, endpoint, store=store, deadline=deadline,
+        )
 
 
-@mcp.tool
+def _try_send_or_enqueue(
+    payload: dict, api_key: str, endpoint: str,
+) -> None:
+    """Best-effort cloud sync: POST or fall back to outbox. Never raises."""
+    try:
+        if not _outbox.try_send(payload, api_key, endpoint):
+            _outbox.enqueue(payload)
+    except Exception:
+        _logger.debug("cloud_sync_background_failed", exc_info=True)
+
+
+@mcp.tool(timeout=10)
 def l6e_authorize_call(
     session_id: Annotated[str, "Session ID from l6e_run_start"],
     tool_name: Annotated[str, "Name of the tool or stage about to run — pass the stage label here (e.g. 'planning', 'implement'). This is NOT a 'stage' parameter; the field is called tool_name."],  # noqa: E501 — Annotated string is the MCP parameter description shown verbatim to agents; must be unambiguous
@@ -222,8 +267,8 @@ def l6e_authorize_call(
     ] = None,
 ) -> dict:
     """Blocking gate: call before launching any sub-agent (actor_type='subagent') and at every stage boundary (planning, search, implement, test, debug). Pass the stage label in tool_name — there is no 'stage' parameter. Returns allow, reroute, or halt — proceed only on allow."""  # noqa: E501 — MCP tool docstring surfaces verbatim to agents; truncating it degrades guidance quality
-    session = _require_session(session_id)
     store = _get_session_store()
+    session = _require_session(session_id, store=store)
     decision = authorize_call(
         store=store,
         session=session,
@@ -241,7 +286,7 @@ def l6e_authorize_call(
     )
     store.increment_checkpoint_calls(session_id)
 
-    snapshot = _spend_snapshot(session)
+    snapshot = _spend_snapshot(session, store=store)
     result = {
         "action": decision.action,
         "remaining_usd": snapshot["remaining_usd"],
@@ -257,7 +302,7 @@ def l6e_authorize_call(
     return result
 
 
-@mcp.tool
+@mcp.tool(timeout=10)
 def l6e_record_usage(
     call_id: Annotated[str, "Call ID from a previous l6e_authorize_call result"],
     actual_prompt_tokens: Annotated[int, "Actual prompt tokens for the completed call"],
@@ -318,7 +363,7 @@ def l6e_record_usage(
     except KeyError as exc:
         raise ToolError(exc.args[0]) from exc
 
-    snapshot = _spend_snapshot(session)
+    snapshot = _spend_snapshot(session, store=store)
     return {
         "call_id": reconciled.call_id,
         "session_id": reconciled.session_id,
@@ -330,7 +375,7 @@ def l6e_record_usage(
     }
 
 
-@mcp.tool
+@mcp.tool(timeout=5)
 def l6e_run_status(
     session_id: Annotated[str, "Session ID from l6e_run_start"],
     estimated_prompt_tokens: Annotated[
@@ -350,8 +395,8 @@ def l6e_run_status(
         store.increment_status_calls(session_id)
     except KeyError as exc:
         raise ToolError(exc.args[0]) from exc
-    session = _require_session(session_id)
-    snapshot = _spend_snapshot(session)
+    session = _require_session(session_id, store=store)
+    snapshot = _spend_snapshot(session, store=store)
     return {
         "budget_pressure": snapshot["budget_pressure"],
         "remaining_usd": snapshot["remaining_usd"],
@@ -359,7 +404,7 @@ def l6e_run_status(
     }
 
 
-@mcp.tool
+@mcp.tool(timeout=10)
 def l6e_run_end(
     session_id: Annotated[str, "Session ID from l6e_run_start"],
 ) -> dict:
@@ -384,13 +429,14 @@ def l6e_run_end(
         raise ToolError(exc.args[0]) from exc
     log.append(summary)
 
-    # Cloud sync: try synchronous POST, fall back to outbox on failure
     api_key = _config.get_api_key()
     if api_key and _config.is_cloud_sync_enabled():
         payload = build_session_report(session, summary, calls)
-        if not _outbox.try_send(payload, api_key, _config.get_cloud_endpoint()):
-            _outbox.enqueue(payload)
-            _logger.debug("cloud_sync_queued", extra={"session_id": session_id})
+        threading.Thread(
+            target=_try_send_or_enqueue,
+            args=(payload, api_key, _config.get_cloud_endpoint()),
+            daemon=True,
+        ).start()
 
     call_exactness_states = [ExactnessState(c.exactness_state) for c in calls]
     run_exactness = run_exactness_state(call_exactness_states)
