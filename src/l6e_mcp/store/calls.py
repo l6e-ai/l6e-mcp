@@ -65,6 +65,7 @@ class CallState:
     parent_call_id: str | None
     call_mode: str | None
     mode_exact_capable: bool | None
+    raw_estimated_cost_usd: Decimal | None = None
 
     def effective_record(self) -> CallRecord:
         prompt_tokens = (
@@ -134,6 +135,7 @@ class CallRepository:
         call_mode: str | None = None,
         exactness_state: str | None = None,
         hosted_ledger_id: str | None = None,
+        raw_estimated_cost_usd: Decimal | None = None,
     ) -> CallState:
         created_at = time.time()
         call_id = f"call_{secrets.token_hex(8)}"
@@ -191,10 +193,10 @@ class CallRepository:
                     created_at, reconciled_at, correlation_key, correlation_source,
                     callback_request_id, callback_trace_id, actor_type, actor_id,
                     actor_name, parent_call_id, call_mode, mode_exact_capable,
-                    exactness_state, hosted_ledger_id
+                    exactness_state, hosted_ledger_id, raw_estimated_cost_usd
                 ) VALUES (
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 """,
                 (
@@ -229,6 +231,7 @@ class CallRepository:
                     int(mode_exact_capable) if mode_exact_capable is not None else None,
                     resolved_exactness_state,
                     hosted_ledger_id,
+                    str(raw_estimated_cost_usd) if raw_estimated_cost_usd is not None else None,
                 ),
             )
         call = self.get(call_id)

@@ -207,4 +207,9 @@ def _call_from_row(row: sqlite3.Row) -> CallState:
         ),
         call_mode=str(row["call_mode"]) if row["call_mode"] is not None else None,
         mode_exact_capable=mode_exact_capable,
+        raw_estimated_cost_usd=(
+            Decimal(str(row["raw_estimated_cost_usd"]))
+            if "raw_estimated_cost_usd" in row.keys() and row["raw_estimated_cost_usd"] is not None  # noqa: SIM118
+            else None
+        ),
     )

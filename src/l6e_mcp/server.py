@@ -285,6 +285,7 @@ def _try_server_authorize(
         actor_name=actor_name,
         parent_call_id=parent_call_id,
         call_mode=call_mode,
+        raw_estimated_cost_usd=raw_cost,
     )
     store.increment_checkpoint_calls(session.session_id)
 

@@ -95,6 +95,11 @@ def build_session_report(
     """Serialize a completed session into the POST /v1/session-reports payload."""
     from l6e_mcp import config as _config
 
+    has_raw_costs = any(c.raw_estimated_cost_usd is not None for c in calls)
+    raw_total = sum(
+        (c.raw_estimated_cost_usd or c.estimated_cost_usd) for c in calls
+    ) if has_raw_costs else None
+
     report: dict = {
         "session_id": session.session_id,
         "model": session.model,
@@ -105,13 +110,16 @@ def build_session_report(
         "savings_confidence": summary.savings_confidence,
         "accounting_mode": session.accounting_mode,
     }
+    if raw_total is not None:
+        report["raw_total_cost_usd"] = float(round(float(raw_total), 8))
     if _config.send_task_summaries():
         if session.start_summary is not None:
             report["start_summary"] = session.start_summary
         if session.end_summary is not None:
             report["end_summary"] = session.end_summary
-    report["calls"] = [
-        {
+    call_dicts = []
+    for c in calls:
+        entry: dict = {
             "call_id": c.call_id,
             "tool_name": c.tool_name,
             "model_requested": c.model_requested,
@@ -132,8 +140,10 @@ def build_session_report(
                 if c.elapsed_ms > 0 else None
             ),
         }
-        for c in calls
-    ]
+        if c.raw_estimated_cost_usd is not None:
+            entry["raw_estimated_cost_usd"] = float(round(c.raw_estimated_cost_usd, 8))
+        call_dicts.append(entry)
+    report["calls"] = call_dicts
     return report
 
 

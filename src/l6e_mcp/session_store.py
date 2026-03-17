@@ -123,6 +123,7 @@ class LocalSessionStore:
         call_mode: str | None = None,
         exactness_state: str | None = None,
         hosted_ledger_id: str | None = None,
+        raw_estimated_cost_usd: Decimal | None = None,
     ) -> CallState:
         return self._calls.create(
             session_id=session_id,
@@ -149,6 +150,7 @@ class LocalSessionStore:
             call_mode=call_mode,
             exactness_state=exactness_state,
             hosted_ledger_id=hosted_ledger_id,
+            raw_estimated_cost_usd=raw_estimated_cost_usd,
         )
 
     def get_call(self, call_id: str) -> CallState | None:
