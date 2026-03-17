@@ -7,7 +7,7 @@
 | src/l6e\_mcp/\_\_init\_\_.py                    |        1 |        0 |    100% |           |
 | src/l6e\_mcp/calibration/\_\_init\_\_.py        |        0 |        0 |    100% |           |
 | src/l6e\_mcp/calibration/config.py              |      101 |        0 |    100% |           |
-| src/l6e\_mcp/config.py                          |       49 |        5 |     90% |32-34, 47-48 |
+| src/l6e\_mcp/config.py                          |       54 |        6 |     89% |32-34, 47-48, 82 |
 | src/l6e\_mcp/contracts/\_\_init\_\_.py          |        0 |        0 |    100% |           |
 | src/l6e\_mcp/contracts/correlation\_envelope.py |       11 |       11 |      0% |      2-18 |
 | src/l6e\_mcp/contracts/exactness.py             |       12 |        0 |    100% |           |
@@ -15,24 +15,25 @@
 | src/l6e\_mcp/core/\_\_init\_\_.py               |        0 |        0 |    100% |           |
 | src/l6e\_mcp/core/authorization.py              |       73 |        3 |     96% |126, 149, 218 |
 | src/l6e\_mcp/core/exactness.py                  |       29 |        0 |    100% |           |
+| src/l6e\_mcp/core/remote\_authorize.py          |       19 |        0 |    100% |           |
 | src/l6e\_mcp/outbox.py                          |      101 |        8 |     92% |82-83, 100-101, 129-131, 160 |
 | src/l6e\_mcp/overhead.py                        |       18 |        1 |     94% |        32 |
-| src/l6e\_mcp/server.py                          |      168 |       11 |     93% |74, 92-93, 100, 103, 219-221, 342, 476, 480 |
-| src/l6e\_mcp/session\_store.py                  |       48 |        3 |     94% |159, 162, 182 |
+| src/l6e\_mcp/server.py                          |      191 |       12 |     94% |75, 93-94, 101, 104, 226-228, 444, 536, 583, 587 |
+| src/l6e\_mcp/session\_store.py                  |       48 |        3 |     94% |161, 164, 184 |
 | src/l6e\_mcp/store/\_\_init\_\_.py              |        0 |        0 |    100% |           |
 | src/l6e\_mcp/store/\_connection.py              |       26 |        0 |    100% |           |
-| src/l6e\_mcp/store/\_migrations.py              |       40 |        0 |    100% |           |
+| src/l6e\_mcp/store/\_migrations.py              |       42 |        0 |    100% |           |
 | src/l6e\_mcp/store/\_serialization.py           |       34 |        1 |     97% |        80 |
 | src/l6e\_mcp/store/calls.py                     |      123 |        5 |     96% |168, 236, 310, 325, 363 |
 | src/l6e\_mcp/store/diagnostics.py               |       16 |        0 |    100% |           |
 | src/l6e\_mcp/store/repositories.py              |       12 |        0 |    100% |           |
 | src/l6e\_mcp/store/schema.py                    |        8 |        0 |    100% |           |
-| src/l6e\_mcp/store/sessions.py                  |       96 |        3 |     97% |126, 170, 192 |
-| src/l6e\_mcp/store/summary.py                   |       51 |        0 |    100% |           |
+| src/l6e\_mcp/store/sessions.py                  |       98 |        3 |     97% |130, 175, 197 |
+| src/l6e\_mcp/store/summary.py                   |       59 |        2 |     97% |  110, 112 |
 | src/l6e\_mcp/tools/\_\_init\_\_.py              |        0 |        0 |    100% |           |
 | src/l6e\_mcp/transport/\_\_init\_\_.py          |        0 |        0 |    100% |           |
 | src/l6e\_mcp/transport/http/\_\_init\_\_.py     |        0 |        0 |    100% |           |
-| **TOTAL**                                       | **1037** |   **52** | **95%** |           |
+| **TOTAL**                                       | **1096** |   **56** | **95%** |           |
 
 
 ## Setup coverage badge
