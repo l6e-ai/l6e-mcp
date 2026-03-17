@@ -15,9 +15,9 @@
 | src/l6e\_mcp/core/\_\_init\_\_.py               |        0 |        0 |    100% |           |
 | src/l6e\_mcp/core/authorization.py              |       73 |        3 |     96% |126, 149, 218 |
 | src/l6e\_mcp/core/exactness.py                  |       29 |        0 |    100% |           |
-| src/l6e\_mcp/outbox.py                          |       93 |        8 |     91% |74-75, 89-90, 115-117, 143 |
+| src/l6e\_mcp/outbox.py                          |      101 |        8 |     92% |82-83, 100-101, 129-131, 160 |
 | src/l6e\_mcp/overhead.py                        |       18 |        1 |     94% |        32 |
-| src/l6e\_mcp/server.py                          |      146 |       14 |     90% |68-69, 76, 79, 164, 175-176, 297, 390-393, 430, 434 |
+| src/l6e\_mcp/server.py                          |      168 |       11 |     93% |74, 92-93, 100, 103, 219-221, 342, 476, 480 |
 | src/l6e\_mcp/session\_store.py                  |       48 |        3 |     94% |159, 162, 182 |
 | src/l6e\_mcp/store/\_\_init\_\_.py              |        0 |        0 |    100% |           |
 | src/l6e\_mcp/store/\_connection.py              |       26 |        0 |    100% |           |
@@ -32,7 +32,7 @@
 | src/l6e\_mcp/tools/\_\_init\_\_.py              |        0 |        0 |    100% |           |
 | src/l6e\_mcp/transport/\_\_init\_\_.py          |        0 |        0 |    100% |           |
 | src/l6e\_mcp/transport/http/\_\_init\_\_.py     |        0 |        0 |    100% |           |
-| **TOTAL**                                       | **1007** |   **55** | **95%** |           |
+| **TOTAL**                                       | **1037** |   **52** | **95%** |           |
 
 
 ## Setup coverage badge
