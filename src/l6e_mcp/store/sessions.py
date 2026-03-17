@@ -18,6 +18,15 @@ from l6e_mcp.store._serialization import (
 
 
 @dataclass(frozen=True)
+class StaleSessionInfo:
+    """Lightweight descriptor for a stale active session."""
+
+    session_id: str
+    call_count: int
+    session_created_at: float
+
+
+@dataclass(frozen=True)
 class SessionState:
     session_id: str
     model: str
@@ -194,3 +203,34 @@ class SessionRepository:
                 raise KeyError(
                     f"Unknown session '{session_id}'. Already ended or never started."
                 )
+
+    def list_stale_active(self, max_idle_seconds: float = 3600) -> list[StaleSessionInfo]:
+        """Return active sessions whose last activity is older than the threshold."""
+        cutoff = time.time() - max_idle_seconds
+        with make_connection(self._path) as conn:
+            rows = conn.execute(
+                """
+                SELECT s.session_id,
+                       COALESCE(c.call_count, 0) AS call_count,
+                       s.created_at AS session_created_at
+                FROM sessions s
+                LEFT JOIN (
+                    SELECT session_id,
+                           MAX(created_at) AS last_call_at,
+                           COUNT(*) AS call_count
+                    FROM calls
+                    GROUP BY session_id
+                ) c ON c.session_id = s.session_id
+                WHERE s.state = 'active'
+                  AND COALESCE(c.last_call_at, s.created_at) < ?
+                """,
+                (cutoff,),
+            ).fetchall()
+        return [
+            StaleSessionInfo(
+                session_id=row["session_id"],
+                call_count=int(row["call_count"]),
+                session_created_at=float(row["session_created_at"]),
+            )
+            for row in rows
+        ]

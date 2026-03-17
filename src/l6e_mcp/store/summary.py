@@ -87,6 +87,44 @@ def session_run_summary(session: SessionState, calls: list[CallState]) -> RunSum
     )
 
 
+def build_session_report(
+    session: SessionState,
+    summary: RunSummary,
+    calls: list[CallState],
+) -> dict:
+    """Serialize a completed session into the POST /v1/session-reports payload."""
+    return {
+        "session_id": session.session_id,
+        "model": session.model,
+        "source": session.source,
+        "total_cost_usd": float(round(summary.total_cost, 8)),
+        "calls_made": summary.calls_made,
+        "reroutes": summary.reroutes,
+        "savings_confidence": summary.savings_confidence,
+        "accounting_mode": session.accounting_mode,
+        "calls": [
+            {
+                "call_id": c.call_id,
+                "tool_name": c.tool_name,
+                "model_requested": c.model_requested,
+                "model_used": c.model_used,
+                "estimated_prompt_tokens": c.estimated_prompt_tokens,
+                "estimated_completion_tokens": c.estimated_completion_tokens,
+                "estimated_cost_usd": float(round(c.estimated_cost_usd, 8)),
+                "actual_prompt_tokens": c.actual_prompt_tokens,
+                "actual_completion_tokens": c.actual_completion_tokens,
+                "actual_cost_usd": (
+                    float(round(c.actual_cost_usd, 8)) if c.actual_cost_usd is not None else None
+                ),
+                "action": "reroute" if c.rerouted else "allow",
+                "actor_type": getattr(c, "actor_type", "parent_agent"),
+                "created_at": c.created_at,
+            }
+            for c in calls
+        ],
+    }
+
+
 def _savings_confidence_from_run_exactness(state: RunExactnessState) -> str:
     if state == RunExactnessState.FULLY_EXACT_FOR_SUPPORTED_CALLS:
         return "exact"

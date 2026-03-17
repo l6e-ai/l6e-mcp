@@ -14,14 +14,19 @@ from l6e_mcp.store._connection import _db_path
 # Re-export the public types so existing ``from l6e_mcp.session_store import X`` imports work.
 from l6e_mcp.store.calls import CallRepository, CallState, ReconcileRequest
 from l6e_mcp.store.diagnostics import DiagnosticsRepository
-from l6e_mcp.store.sessions import SessionRepository, SessionState
-from l6e_mcp.store.summary import session_run_summary  # noqa: F401 (re-export)
+from l6e_mcp.store.sessions import SessionRepository, SessionState, StaleSessionInfo
+from l6e_mcp.store.summary import (  # noqa: F401 (re-export)
+    build_session_report,
+    session_run_summary,
+)
 
 __all__ = [
     "LocalSessionStore",
     "SessionState",
+    "StaleSessionInfo",
     "CallState",
     "ReconcileRequest",
+    "build_session_report",
     "session_run_summary",
 ]
 
@@ -81,6 +86,9 @@ class LocalSessionStore:
 
     def increment_status_calls(self, session_id: str, increment_by: int = 1) -> None:
         self._sessions.increment_status_calls(session_id, increment_by=increment_by)
+
+    def list_stale_active(self, max_idle_seconds: float = 3600) -> list[StaleSessionInfo]:
+        return self._sessions.list_stale_active(max_idle_seconds)
 
     # ------------------------------------------------------------------
     # Call methods

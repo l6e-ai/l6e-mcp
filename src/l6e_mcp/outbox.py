@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 _OUTBOX_DIR = Path.home() / ".l6e" / "outbox"
 _STALE_SECONDS = 7 * 24 * 3600  # 7 days
+_MAX_RECOVERY_AGE_SECONDS = 30 * 24 * 3600  # 30 days
 
 
 def _outbox_dir() -> Path:
@@ -87,3 +88,87 @@ def drain(api_key: str, endpoint: str) -> None:
                 path.unlink(missing_ok=True)
         except Exception:
             logger.debug("outbox_drain_item_failed", exc_info=True)
+
+
+def recover_stale_sessions(
+    api_key: str,
+    endpoint: str,
+    max_idle_seconds: float = 3600,
+) -> None:
+    """Finalize stale active sessions and sync recoverable ones to the hosted edge.
+
+    Called after drain in the l6e_run_start background thread. Best-effort: never raises.
+
+    Categories:
+    - Zero calls: finalize locally, skip sync (noise).
+    - Age > 30 days: finalize locally, skip sync (too old).
+    - Has calls, within 30 days: finalize, build report, sync or enqueue.
+    """
+    from l6e._log import LocalRunLog
+
+    from l6e_mcp.session_store import LocalSessionStore
+    from l6e_mcp.store.summary import build_session_report, session_run_summary
+
+    try:
+        store = LocalSessionStore()
+        stale = store.list_stale_active(max_idle_seconds)
+    except Exception:
+        logger.debug("recover_stale_list_failed", exc_info=True)
+        return
+
+    if not stale:
+        return
+
+    now = time.time()
+    for info in stale:
+        try:
+            if info.call_count == 0:
+                store.finalize_session(info.session_id)
+                logger.debug(
+                    "stale_session_dropped_zero_calls",
+                    extra={"session_id": info.session_id},
+                )
+                continue
+
+            if now - info.session_created_at > _MAX_RECOVERY_AGE_SECONDS:
+                store.finalize_session(info.session_id)
+                logger.debug(
+                    "stale_session_dropped_too_old",
+                    extra={"session_id": info.session_id},
+                )
+                continue
+
+            session = store.get_session(info.session_id)
+            if session is None or session.state != "active":
+                continue
+
+            calls = store.list_calls_for_session(info.session_id)
+            summary = session_run_summary(session, calls)
+
+            store.finalize_session(info.session_id)
+
+            log = (
+                LocalRunLog(path=Path(session.log_path))
+                if session.log_path is not None
+                else LocalRunLog()
+            )
+            log.append(summary)
+
+            payload = build_session_report(session, summary, calls)
+            if not try_send(payload, api_key, endpoint):
+                enqueue(payload)
+                logger.debug(
+                    "stale_session_enqueued",
+                    extra={"session_id": info.session_id},
+                )
+            else:
+                logger.debug(
+                    "stale_session_recovered",
+                    extra={"session_id": info.session_id},
+                )
+        except Exception:
+            logger.debug(
+                "stale_session_recovery_failed",
+                exc_info=True,
+                extra={"session_id": info.session_id},
+            )
