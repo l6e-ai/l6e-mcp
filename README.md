@@ -15,10 +15,10 @@
 | src/l6e\_mcp/core/\_\_init\_\_.py               |        0 |        0 |    100% |           |
 | src/l6e\_mcp/core/authorization.py              |       73 |        3 |     96% |126, 149, 218 |
 | src/l6e\_mcp/core/exactness.py                  |       29 |        0 |    100% |           |
-| src/l6e\_mcp/outbox.py                          |       54 |        4 |     93% |73-74, 88-89 |
+| src/l6e\_mcp/outbox.py                          |       93 |        8 |     91% |74-75, 89-90, 115-117, 143 |
 | src/l6e\_mcp/overhead.py                        |       18 |        1 |     94% |        32 |
-| src/l6e\_mcp/server.py                          |      145 |       13 |     91% |68-69, 76, 79, 106, 202, 329, 422-425, 462, 466 |
-| src/l6e\_mcp/session\_store.py                  |       46 |        3 |     93% |151, 154, 174 |
+| src/l6e\_mcp/server.py                          |      146 |       14 |     90% |68-69, 76, 79, 164, 175-176, 297, 390-393, 430, 434 |
+| src/l6e\_mcp/session\_store.py                  |       48 |        3 |     94% |159, 162, 182 |
 | src/l6e\_mcp/store/\_\_init\_\_.py              |        0 |        0 |    100% |           |
 | src/l6e\_mcp/store/\_connection.py              |       26 |        0 |    100% |           |
 | src/l6e\_mcp/store/\_migrations.py              |       40 |        0 |    100% |           |
@@ -27,12 +27,12 @@
 | src/l6e\_mcp/store/diagnostics.py               |       16 |        0 |    100% |           |
 | src/l6e\_mcp/store/repositories.py              |       12 |        0 |    100% |           |
 | src/l6e\_mcp/store/schema.py                    |        8 |        0 |    100% |           |
-| src/l6e\_mcp/store/sessions.py                  |       86 |        3 |     97% |117, 161, 183 |
-| src/l6e\_mcp/store/summary.py                   |       49 |        0 |    100% |           |
+| src/l6e\_mcp/store/sessions.py                  |       96 |        3 |     97% |126, 170, 192 |
+| src/l6e\_mcp/store/summary.py                   |       51 |        0 |    100% |           |
 | src/l6e\_mcp/tools/\_\_init\_\_.py              |        0 |        0 |    100% |           |
 | src/l6e\_mcp/transport/\_\_init\_\_.py          |        0 |        0 |    100% |           |
 | src/l6e\_mcp/transport/http/\_\_init\_\_.py     |        0 |        0 |    100% |           |
-| **TOTAL**                                       |  **953** |   **50** | **95%** |           |
+| **TOTAL**                                       | **1007** |   **55** | **95%** |           |
 
 
 ## Setup coverage badge
