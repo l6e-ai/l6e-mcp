@@ -45,6 +45,8 @@ class SessionState:
     ask_mode_exact_capable: bool
     plan_mode_exact_capable: bool
     agent_mode_exact_capable: bool
+    start_summary: str | None = None
+    end_summary: str | None = None
 
 
 class SessionRepository:
@@ -69,6 +71,7 @@ class SessionRepository:
         ask_mode_exact_capable: bool | None = None,
         plan_mode_exact_capable: bool | None = None,
         agent_mode_exact_capable: bool | None = None,
+        start_summary: str | None = None,
     ) -> SessionState:
         created_at = time.time()
         effective_usage_channel = usage_channel or store_schema.USAGE_CHANNEL_NONE
@@ -104,8 +107,8 @@ class SessionRepository:
                     accounting_mode, usage_channel,
                     ask_mode_exact_capable, plan_mode_exact_capable, agent_mode_exact_capable,
                     state, next_call_index, checkpoint_calls, status_calls,
-                    created_at, ended_at, finalized_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, 0, 0, ?, NULL, NULL)
+                    created_at, ended_at, finalized_at, start_summary
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, 0, 0, ?, NULL, NULL, ?)
                 """,
                 (
                     session_id,
@@ -119,6 +122,7 @@ class SessionRepository:
                     int(resolved_plan),
                     int(resolved_agent),
                     created_at,
+                    start_summary,
                 ),
             )
         session = self.get(session_id)
@@ -142,7 +146,7 @@ class SessionRepository:
             raise KeyError(f"Unknown session '{session_id}'. Already ended or never started.")
         return session
 
-    def finalize(self, session_id: str) -> SessionState:
+    def finalize(self, session_id: str, *, end_summary: str | None = None) -> SessionState:
         finalized_at = time.time()
         with make_connection(self._path) as conn:
             row = conn.execute(
@@ -160,10 +164,11 @@ class SessionRepository:
             conn.execute(
                 """
                 UPDATE sessions
-                SET state = 'finalized', ended_at = ?, finalized_at = ?
+                SET state = 'finalized', ended_at = ?, finalized_at = ?,
+                    end_summary = COALESCE(?, end_summary)
                 WHERE session_id = ?
                 """,
-                (finalized_at, finalized_at, session_id),
+                (finalized_at, finalized_at, end_summary, session_id),
             )
         session = self.get(session_id)
         if session is None:

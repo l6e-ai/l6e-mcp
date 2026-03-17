@@ -70,3 +70,14 @@ def is_cloud_sync_enabled() -> bool:
     if env:
         return env in _TRUTHY
     return bool(_load_toml().get("cloud_sync", False))
+
+
+def send_task_summaries() -> bool:
+    """Whether to include task summaries in cloud-synced session reports.
+
+    Summaries are always stored locally regardless of this setting.
+    """
+    env = os.environ.get("L6E_SEND_TASK_SUMMARIES", "").strip().lower()
+    if env:
+        return env in _TRUTHY
+    return bool(_load_toml().get("send_task_summaries", True))

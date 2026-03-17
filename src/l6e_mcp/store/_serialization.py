@@ -115,6 +115,12 @@ def _session_from_row(row: sqlite3.Row) -> SessionState:
         ask_mode_exact_capable=bool(row["ask_mode_exact_capable"]),
         plan_mode_exact_capable=bool(row["plan_mode_exact_capable"]),
         agent_mode_exact_capable=bool(row["agent_mode_exact_capable"]),
+        start_summary=(
+            str(row["start_summary"]) if "start_summary" in row.keys() and row["start_summary"] is not None else None  # noqa: SIM118, E501
+        ),
+        end_summary=(
+            str(row["end_summary"]) if "end_summary" in row.keys() and row["end_summary"] is not None else None  # noqa: SIM118, E501
+        ),
     )
 
 

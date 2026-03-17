@@ -93,7 +93,9 @@ def build_session_report(
     calls: list[CallState],
 ) -> dict:
     """Serialize a completed session into the POST /v1/session-reports payload."""
-    return {
+    from l6e_mcp import config as _config
+
+    report: dict = {
         "session_id": session.session_id,
         "model": session.model,
         "source": session.source,
@@ -102,31 +104,37 @@ def build_session_report(
         "reroutes": summary.reroutes,
         "savings_confidence": summary.savings_confidence,
         "accounting_mode": session.accounting_mode,
-        "calls": [
-            {
-                "call_id": c.call_id,
-                "tool_name": c.tool_name,
-                "model_requested": c.model_requested,
-                "model_used": c.model_used,
-                "estimated_prompt_tokens": c.estimated_prompt_tokens,
-                "estimated_completion_tokens": c.estimated_completion_tokens,
-                "estimated_cost_usd": float(round(c.estimated_cost_usd, 8)),
-                "actual_prompt_tokens": c.actual_prompt_tokens,
-                "actual_completion_tokens": c.actual_completion_tokens,
-                "actual_cost_usd": (
-                    float(round(c.actual_cost_usd, 8)) if c.actual_cost_usd is not None else None
-                ),
-                "action": "reroute" if c.rerouted else "allow",
-                "actor_type": getattr(c, "actor_type", "parent_agent"),
-                "created_at": c.created_at,
-                "finished_at": (
-                    c.created_at + c.elapsed_ms / 1000.0
-                    if c.elapsed_ms > 0 else None
-                ),
-            }
-            for c in calls
-        ],
     }
+    if _config.send_task_summaries():
+        if session.start_summary is not None:
+            report["start_summary"] = session.start_summary
+        if session.end_summary is not None:
+            report["end_summary"] = session.end_summary
+    report["calls"] = [
+        {
+            "call_id": c.call_id,
+            "tool_name": c.tool_name,
+            "model_requested": c.model_requested,
+            "model_used": c.model_used,
+            "estimated_prompt_tokens": c.estimated_prompt_tokens,
+            "estimated_completion_tokens": c.estimated_completion_tokens,
+            "estimated_cost_usd": float(round(c.estimated_cost_usd, 8)),
+            "actual_prompt_tokens": c.actual_prompt_tokens,
+            "actual_completion_tokens": c.actual_completion_tokens,
+            "actual_cost_usd": (
+                float(round(c.actual_cost_usd, 8)) if c.actual_cost_usd is not None else None
+            ),
+            "action": "reroute" if c.rerouted else "allow",
+            "actor_type": getattr(c, "actor_type", "parent_agent"),
+            "created_at": c.created_at,
+            "finished_at": (
+                c.created_at + c.elapsed_ms / 1000.0
+                if c.elapsed_ms > 0 else None
+            ),
+        }
+        for c in calls
+    ]
+    return report
 
 
 def _savings_confidence_from_run_exactness(state: RunExactnessState) -> str:

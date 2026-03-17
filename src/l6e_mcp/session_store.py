@@ -58,6 +58,7 @@ class LocalSessionStore:
         ask_mode_exact_capable: bool | None = None,
         plan_mode_exact_capable: bool | None = None,
         agent_mode_exact_capable: bool | None = None,
+        start_summary: str | None = None,
     ) -> SessionState:
         return self._sessions.create(
             session_id=session_id,
@@ -70,6 +71,7 @@ class LocalSessionStore:
             ask_mode_exact_capable=ask_mode_exact_capable,
             plan_mode_exact_capable=plan_mode_exact_capable,
             agent_mode_exact_capable=agent_mode_exact_capable,
+            start_summary=start_summary,
         )
 
     def get_session(self, session_id: str) -> SessionState | None:
@@ -78,8 +80,8 @@ class LocalSessionStore:
     def require_active_session(self, session_id: str) -> SessionState:
         return self._sessions.require_active(session_id)
 
-    def finalize_session(self, session_id: str) -> SessionState:
-        return self._sessions.finalize(session_id)
+    def finalize_session(self, session_id: str, *, end_summary: str | None = None) -> SessionState:
+        return self._sessions.finalize(session_id, end_summary=end_summary)
 
     def increment_checkpoint_calls(self, session_id: str, increment_by: int = 1) -> None:
         self._sessions.increment_checkpoint_calls(session_id, increment_by=increment_by)

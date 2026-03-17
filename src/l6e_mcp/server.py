@@ -156,9 +156,14 @@ def l6e_run_start(
         str,
         "Unknown pricing policy mode: warn_only, reroute_required, or halt_on_unknown_pricing.",
     ] = "warn_only",
+    task_summary: Annotated[
+        str | None,
+        "Optional 5-10 word task label, like a commit subject. Null is fine.",
+    ] = None,
 ) -> dict:
-    """Start a new budget-enforced session. Call once at the start of every task before any other work. Returns session_id in the response — store it and pass it to all subsequent l6e calls. Do NOT pass session_id or task_description as inputs; they are not valid parameters for this tool."""  # noqa: E501 — MCP tool docstring surfaces verbatim to agents; truncating it degrades guidance quality
+    """Start a new budget-enforced session. Call once at the start of every task before any other work. Returns session_id in the response — store it and pass it to all subsequent l6e calls. Do NOT pass session_id or task_description — use task_summary for a brief task label."""  # noqa: E501 — MCP tool docstring surfaces verbatim to agents; truncating it degrades guidance quality
     model = model.strip() or "unknown"
+    start_summary = task_summary[:200] if task_summary else None
     try:
         pricing_mode = UnknownModelPricingMode(unknown_model_pricing_mode)
     except ValueError as exc:
@@ -185,6 +190,7 @@ def l6e_run_start(
         ask_mode_exact_capable=ask_mode_exact_capable,
         plan_mode_exact_capable=plan_mode_exact_capable,
         agent_mode_exact_capable=agent_mode_exact_capable,
+        start_summary=start_summary,
     )
 
     api_key = _config.get_api_key()
@@ -407,8 +413,13 @@ def l6e_run_status(
 @mcp.tool(timeout=10)
 def l6e_run_end(
     session_id: Annotated[str, "Session ID from l6e_run_start"],
+    task_summary: Annotated[
+        str | None,
+        "Optional 5-10 word summary of what was accomplished. Null is fine.",
+    ] = None,
 ) -> dict:
     """End the session and flush the run log. Call at task end, including on failure or cancellation — this is the only way to persist the run log."""  # noqa: E501 — MCP tool docstring surfaces verbatim to agents; truncating it degrades guidance quality
+    end_summary = task_summary[:200] if task_summary else None
     store = _get_session_store()
     session = store.get_session(session_id)
     if session is None or session.state == "finalized":
@@ -424,7 +435,7 @@ def l6e_run_end(
         else LocalRunLog()
     )
     try:
-        store.finalize_session(session_id)
+        store.finalize_session(session_id, end_summary=end_summary)
     except KeyError as exc:
         raise ToolError(exc.args[0]) from exc
     log.append(summary)
