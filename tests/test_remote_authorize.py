@@ -8,14 +8,11 @@ Covers:
 """
 from __future__ import annotations
 
-from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
 import httpx
-import pytest
 
 from l6e_mcp.core.remote_authorize import try_remote_authorize
-
 
 # ---------------------------------------------------------------------------
 # try_remote_authorize unit tests
@@ -230,7 +227,7 @@ class TestServerFirstBranch:
         with patch(
             "l6e_mcp.server.try_remote_authorize",
         ) as mock_remote:
-            result = await _authorize(
+            await _authorize(
                 client,
                 session_id,
                 actual_prompt_tokens=1000,

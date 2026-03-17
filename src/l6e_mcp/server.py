@@ -21,8 +21,8 @@ from l6e_mcp import config as _config
 from l6e_mcp import outbox as _outbox
 from l6e_mcp.contracts.exactness import ExactnessState
 from l6e_mcp.core.authorization import authorize_call
-from l6e_mcp.core.remote_authorize import try_remote_authorize
 from l6e_mcp.core.exactness import run_exactness_state
+from l6e_mcp.core.remote_authorize import try_remote_authorize
 from l6e_mcp.session_store import (
     LocalSessionStore,
     ReconcileRequest,
