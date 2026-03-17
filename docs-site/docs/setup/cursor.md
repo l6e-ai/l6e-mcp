@@ -7,7 +7,7 @@ sidebar_position: 1
 
 Connect the `l6e-budget` MCP server to Cursor for session-scoped budget enforcement.
 
-This setup uses the estimate-first path. The agent gates calls using pre-call token estimates; call `l6e_record_usage` manually if you want to feed actual token counts back into the ledger for exact accounting.
+This setup uses calibrated enforcement mode. The agent gates calls using pre-call token estimates; call `l6e_record_usage` manually if you want to feed actual token counts back into the ledger for exact accounting.
 
 ## Install
 
@@ -34,7 +34,9 @@ Add the following to your MCP configuration file.
       "command": "uvx",
       "args": ["l6e-mcp"],
       "env": {
-        "L6E_LOG_PATH": "${HOME}/.l6e/runs.jsonl"
+        "L6E_LOG_PATH": "${HOME}/.l6e/runs.jsonl",
+        "L6E_API_KEY": "sk-l6e-...",
+        "L6E_CLOUD_SYNC": "1"
       }
     }
   }
@@ -42,6 +44,8 @@ Add the following to your MCP configuration file.
 ```
 
 `L6E_LOG_PATH` is recommended. Cursor spawns MCP servers as child processes, so without it `runs.jsonl` will be written relative to wherever the Cursor process started — which is not always your project directory, particularly with a global config.
+
+`L6E_API_KEY` and `L6E_CLOUD_SYNC` are optional — omit them to run fully local. When set, session run logs are synced to the l6e cloud after each `l6e_run_end`.
 
 If you installed `l6e-mcp` manually instead of using `uvx`:
 
@@ -51,7 +55,9 @@ If you installed `l6e-mcp` manually instead of using `uvx`:
     "l6e-budget": {
       "command": "l6e-mcp",
       "env": {
-        "L6E_LOG_PATH": "${HOME}/.l6e/runs.jsonl"
+        "L6E_LOG_PATH": "${HOME}/.l6e/runs.jsonl",
+        "L6E_API_KEY": "sk-l6e-...",
+        "L6E_CLOUD_SYNC": "1"
       }
     }
   }

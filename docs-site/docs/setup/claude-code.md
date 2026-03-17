@@ -7,7 +7,7 @@ sidebar_position: 2
 
 Connect the `l6e-budget` MCP server to Claude Code for session-scoped budget enforcement.
 
-This setup uses the estimate-first path. The agent gates calls using pre-call token estimates; call `l6e_record_usage` manually if you want to feed actual token counts back into the ledger for exact accounting.
+This setup uses calibrated enforcement mode. The agent gates calls using pre-call token estimates; call `l6e_record_usage` manually if you want to feed actual token counts back into the ledger for exact accounting.
 
 ## Install
 
@@ -27,19 +27,33 @@ Claude Code stores MCP server configurations at two scope levels. Use the CLI (r
 
 ```bash
 # User scope — available across all projects, stored in ~/.claude.json
-claude mcp add --scope user -e "L6E_LOG_PATH=$HOME/.l6e/runs.jsonl" -- l6e-budget uvx l6e-mcp
+claude mcp add --scope user \
+  -e "L6E_LOG_PATH=$HOME/.l6e/runs.jsonl" \
+  -e "L6E_API_KEY=sk-l6e-..." \
+  -e "L6E_CLOUD_SYNC=1" \
+  -- l6e-budget uvx l6e-mcp
 
 # Project scope — checked into .mcp.json, shared with team
-claude mcp add --scope project -e "L6E_LOG_PATH=$HOME/.l6e/runs.jsonl" -- l6e-budget uvx l6e-mcp
+claude mcp add --scope project \
+  -e "L6E_LOG_PATH=$HOME/.l6e/runs.jsonl" \
+  -e "L6E_API_KEY=sk-l6e-..." \
+  -e "L6E_CLOUD_SYNC=1" \
+  -- l6e-budget uvx l6e-mcp
 ```
 
-The `--` between the env var and the server name is required — `-e` accepts multiple values, so without it the CLI treats the server name as a second env var and errors.
+The `--` between the env vars and the server name is required — `-e` accepts multiple values, so without it the CLI treats the server name as a second env var and errors.
+
+`L6E_API_KEY` and `L6E_CLOUD_SYNC` are optional — omit them to run fully local. When set, session run logs are synced to the l6e cloud after each `l6e_run_end`.
 
 If `uvx` is not on the PATH that Claude Code sees, use the full path:
 
 ```bash
 which uvx  # then substitute the result
-claude mcp add --scope user -e "L6E_LOG_PATH=$HOME/.l6e/runs.jsonl" -- l6e-budget /full/path/to/uvx l6e-mcp
+claude mcp add --scope user \
+  -e "L6E_LOG_PATH=$HOME/.l6e/runs.jsonl" \
+  -e "L6E_API_KEY=sk-l6e-..." \
+  -e "L6E_CLOUD_SYNC=1" \
+  -- l6e-budget /full/path/to/uvx l6e-mcp
 ```
 
 ### Manual config (`mcp.json`)
@@ -53,7 +67,9 @@ Claude Code uses `.mcp.json` in the project root (project scope, checked into gi
       "command": "uvx",
       "args": ["l6e-mcp"],
       "env": {
-        "L6E_LOG_PATH": "${HOME:-~}/.l6e/runs.jsonl"
+        "L6E_LOG_PATH": "${HOME:-~}/.l6e/runs.jsonl",
+        "L6E_API_KEY": "sk-l6e-...",
+        "L6E_CLOUD_SYNC": "1"
       }
     }
   }

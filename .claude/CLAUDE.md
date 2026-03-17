@@ -5,13 +5,15 @@ Pass `model` as the exact active billing model ID (or `"unknown"`), and set `cli
 
 **Always call MCP tools with only the parameters defined in the tool schema. Never invent parameters — `additionalProperties: false` means any extra field causes a hard validation error. When in doubt, read the schema descriptor before calling.**
 
-- `l6e_run_start`: accepts `budget_usd`, `model`, `client`, and optional config fields. Do NOT pass `session_id` or `task_description`.
-- `l6e_run_end`: accepts only `session_id`. Do NOT pass `status` or any other field.
-- Never tell the user how much they spent when it is an estimate.
+- `l6e_run_start`: accepts `budget_usd`, `model`, `client`, `task_summary` (brief label, okay to omit), and optional config fields. Do NOT pass `session_id` or `task_description`.
+- `l6e_run_end`: accepts `session_id` and optional `task_summary` (brief label of what was done).
+- Never tell the user how much they spent when costs are calibrated (not reconciled).
 
 ## Checkpoint policy
 
-**Sub-agent gate (blocking prerequisite):** You MUST call `l6e_authorize_call` with `actor_type="subagent"` and obtain an `allow` response BEFORE launching any subagent or agent team member. Do not launch the subagent, do not write its prompt, do not call the tool until you have a `call_id` from this check. There are no exceptions — budget size, perceived task cheapness, and tool type are all irrelevant.
+**Sub-agent gate (blocking prerequisite):** You MUST call `l6e_authorize_call` with `actor_type="subagent"` and obtain an `allow` response BEFORE launching any Task sub-agent. Do not launch the sub-agent, do not write its prompt, do not call the Task tool until you have a `call_id` from this check. There are no exceptions — budget size, perceived task cheapness, and tool type are all irrelevant.
+
+**Post-subagent checkpoint:** After any subagent completes, immediately call `l6e_run_status` before continuing work. Subagents are the most expensive single operations — their cost is unpredictable because they make their own chain of tool calls. If pressure is `"high"` or `"critical"`, escalate to `l6e_authorize_call` and inform the user of spend so far before proceeding.
 
 **Stage transitions (blocking prerequisite):** You MUST call `l6e_authorize_call` at every stage boundary before beginning new work. Required transitions include but are not limited to: after `l6e_run_start` (use `tool_name="planning"`), search → implement, implement → test, test → debug. Do not begin the next stage until you have a `call_id` from this check.
 
@@ -24,18 +26,21 @@ Pass `model` as the exact active billing model ID (or `"unknown"`), and set `cli
 **After a progress update or revised plan:** Run a full check before starting the new work batch.
 
 **Full check responses:**
-- `allow`: proceed
+- `allow`: proceed. Check the `budget_pressure` field in the response. If `"moderate"`, continue but prefer cheaper approaches (skip subagents, minimize file reads). If `"high"`, inform the user of budget pressure before continuing — they may want to increase the budget or scope down.
 - `reroute`: stop and tell the user budget threshold is reached; suggest a cheaper model
-- `halt`: stop and tell the user session budget is exhausted
+- `halt`: stop making tool calls immediately. You retain full context — communicate your complete plan, findings, and remaining work to the user. They can approve additional budget to continue without losing context. Do NOT start a new session; wait for the user to set a new budget.
 
 ## Estimation defaults
 
-**In estimate-only mode (no proxy), the gate is only as reliable as your estimates. When in doubt, overestimate — a conservative estimate that triggers a reroute is far better than an underestimate that lets a session silently overspend.**
+**In calibrated enforcement mode (no proxy), the gate is only as reliable as your estimates. When in doubt, overestimate — a conservative estimate that triggers a reroute is far better than an underestimate that lets a session silently overspend.**
 
 - Prefer dual-token inputs: `estimated_prompt_tokens` + `estimated_completion_tokens`
 - Default: `estimated_prompt_tokens: 2000`, `estimated_completion_tokens: 400`
 - For clearly large operations (multi-file reads, long tests/builds), double the default.
 - Do not use line-based formulas like `total_lines * 20`; they over-inflate estimates and cause false halts.
+
+## Budget sizing
+When `l6e_run_start` returns a `calibration_factor` greater than 15x, inform the user that calibrated costs are significantly higher than raw token pricing. At high calibration factors, budgets under $3 may only cover exploration. For implementation tasks, suggest $3-5 minimum. Do not silently proceed with a budget likely to halt mid-task.
 
 ## Sub-agent rules
 - Sub-agents reuse the parent `session_id`; never start a new session.

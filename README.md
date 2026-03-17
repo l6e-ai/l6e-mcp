@@ -19,11 +19,11 @@ pip install l6e-mcp
 
 | Tool | Purpose |
 |---|---|
-| `l6e_run_start` | Open a new budget session. Returns `session_id`. |
-| `l6e_authorize_call` | Gate-check a pending tool call and return a `call_id` with correlation hints. |
+| `l6e_run_start` | Open a new budget session. Accepts `task_summary`, `accounting_mode`, `unknown_model_pricing_mode`, and per-mode exactness overrides. Returns `session_id`. |
+| `l6e_authorize_call` | Blocking gate before sub-agents (`actor_type='subagent'`) and stage transitions. Returns `allow`, `reroute`, or `halt` with a `call_id`. Pass `actual_prompt_tokens` + `actual_completion_tokens` to reconcile inline instead of a separate `l6e_record_usage` call. |
 | `l6e_record_usage` | Attach exact token usage to an existing `call_id` (idempotent). |
-| `l6e_run_status` | Read-only spend snapshot for the current session. |
-| `l6e_run_end` | Close the session and flush the run log to `.l6e/runs.jsonl`. |
+| `l6e_run_status` | Read-only spend snapshot. Pass `estimated_prompt_tokens` + `estimated_completion_tokens` for a cost-projection assessment before the next stage. |
+| `l6e_run_end` | Close the session and flush the run log to `.l6e/runs.jsonl`. Returns exactness state, mode coverage gaps, and pending reconciliation count. |
 
 ## Running locally without a backend proxy
 
@@ -51,6 +51,10 @@ If you need genuinely hard enforcement against actual spend, you can call `l6e_r
 | `L6E_LOG_PATH` | `.l6e/runs.jsonl` (relative to cwd) | Override the run log path. **Required for Windsurf; strongly recommended for Cursor, Claude Code, and OpenClaw** — see setup guides. |
 | `L6E_SESSION_DB_PATH` | `~/.l6e/sessions.db` | Override the local SQLite database path. |
 | `L6E_CALIBRATION_PATH` | _(unset)_ | Path to a JSON calibration file produced by `l6e-calibration-generate`. When set, per-model token-estimate calibration is applied automatically. |
+| `L6E_API_KEY` | _(unset)_ | API key for cloud sync. When set alongside `L6E_CLOUD_SYNC=1`, sessions are uploaded to the l6e backend for team-level visibility and server-side calibration. |
+| `L6E_CLOUD_SYNC` | `false` | Set to `1`, `true`, or `yes` to enable cloud sync. Requires `L6E_API_KEY`. |
+| `L6E_CLOUD_ENDPOINT` | `https://api.l6e.ai` | Override the cloud sync endpoint. |
+| `L6E_CONFIG_PATH` | `~/.l6e/config.toml` | Override the config file path. The config file accepts `api_key`, `cloud_sync`, `cloud_endpoint`, and `send_task_summaries` keys. |
 
 ## Calibration tool
 

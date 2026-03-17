@@ -59,6 +59,9 @@ That said, it still works. An agent told it has a $2 budget and that it must che
 | `L6E_LOG_PATH` | `.l6e/runs.jsonl` (relative to cwd) | Override the run log path. **Required for Windsurf; strongly recommended for Cursor, Claude Code, and OpenClaw.** |
 | `L6E_SESSION_DB_PATH` | `~/.l6e/sessions.db` | Override the local SQLite database path. |
 | `L6E_CALIBRATION_PATH` | _(unset)_ | Path to a JSON calibration file produced by `l6e-calibration-generate`. When set, per-model token-estimate calibration is applied automatically. |
+| `L6E_API_KEY` | _(unset)_ | API key for cloud sync. Get a key at [l6e.ai](https://l6e.ai). Can also be set in `~/.l6e/config.toml` as `api_key`. |
+| `L6E_CLOUD_SYNC` | `false` | Set to `1` or `true` to sync session run logs to the l6e cloud. Requires `L6E_API_KEY`. Can also be set in `~/.l6e/config.toml` as `cloud_sync = true`. |
+| `L6E_SEND_TASK_SUMMARIES` | `true` | Whether to include task summaries in cloud-synced session reports. Summaries are always stored locally regardless of this setting. |
 
 ## Exactness states
 
@@ -74,8 +77,8 @@ That said, it still works. An agent told it has a $2 budget and that it must che
 ## Known limitations
 
 - **Rerouting is advisory only.** When `l6e_authorize_call` returns `"action": "reroute"`, it signals the agent to prompt the user to select a cheaper model. The MCP protocol has no primitive for forcing a model switch.
-- **Local persistence only.** Sessions persist in a local SQLite database; there is no remote sync or team-level control plane in the OSS version.
-- **Estimate-first by default.** Exact real-time accounting requires `l6e_record_usage` calls from your agent with the actual token counts after each LLM call completes.
+- **Estimate-based by default.** Exact real-time accounting requires `l6e_record_usage` calls from your agent with the actual token counts after each LLM call completes.
+- **Cloud sync is opt-in.** Sessions persist locally in SQLite by default. Set `L6E_API_KEY` and `L6E_CLOUD_SYNC=1` to sync run logs to the l6e cloud.
 
 ## License
 
