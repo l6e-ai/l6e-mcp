@@ -21,6 +21,7 @@ from l6e_mcp import config as _config
 from l6e_mcp import outbox as _outbox
 from l6e_mcp.contracts.exactness import ExactnessState
 from l6e_mcp.core.authorization import authorize_call
+from l6e_mcp.core.remote_authorize import try_remote_authorize
 from l6e_mcp.core.exactness import run_exactness_state
 from l6e_mcp.session_store import (
     LocalSessionStore,
@@ -227,6 +228,78 @@ def _try_send_or_enqueue(
         _logger.debug("cloud_sync_background_failed", exc_info=True)
 
 
+def _try_server_authorize(
+    *,
+    api_key: str,
+    session: SessionState,
+    store: LocalSessionStore,
+    tool_name: str,
+    estimated_tokens: int | None,
+    estimated_prompt_tokens: int | None,
+    estimated_completion_tokens: int | None,
+    actor_type: str,
+    actor_id: str | None,
+    actor_name: str | None,
+    parent_call_id: str | None,
+    call_mode: str | None,
+) -> dict | None:
+    """Try server-side authorize with calibrated cost factors.
+
+    Returns the MCP response dict on success, or None to fall back to local auth.
+    """
+    prompt_tokens = estimated_prompt_tokens or estimated_tokens or 2000
+    completion_tokens = estimated_completion_tokens or 400
+
+    estimator = LiteLLMCostEstimator(
+        fallback_cost_per_1k_tokens=session.policy.unknown_model_cost_per_1k_tokens
+    )
+    raw_cost = estimator.estimate(session.model, prompt_tokens, completion_tokens)
+
+    snapshot = _spend_snapshot(session, store=store)
+
+    server_resp = try_remote_authorize(
+        api_key=api_key,
+        endpoint=_config.get_cloud_endpoint(),
+        session_id=session.session_id,
+        model=session.model,
+        tool_name=tool_name,
+        estimated_cost_usd=float(raw_cost),
+        budget_usd=session.policy.budget,
+        spent_usd=snapshot["spent_usd"],
+    )
+    if server_resp is None:
+        return None
+
+    calibrated_cost = Decimal(str(server_resp["calibrated_cost_usd"]))
+    call = store.create_call(
+        session_id=session.session_id,
+        tool_name=tool_name,
+        model_requested=session.model,
+        model_used=session.model,
+        estimated_prompt_tokens=prompt_tokens,
+        estimated_completion_tokens=completion_tokens,
+        estimated_cost_usd=calibrated_cost,
+        rerouted=server_resp["action"] == "reroute",
+        actor_type=actor_type,
+        actor_id=actor_id,
+        actor_name=actor_name,
+        parent_call_id=parent_call_id,
+        call_mode=call_mode,
+    )
+    store.increment_checkpoint_calls(session.session_id)
+
+    result: dict = {
+        "action": server_resp["action"],
+        "remaining_usd": server_resp["remaining_usd"],
+        "budget_pressure": server_resp["budget_pressure"],
+        "reason": "server_calibrated",
+        "call_id": call.call_id,
+        "calibration_factor": server_resp.get("calibration_factor", 1.0),
+        "calibration_source": server_resp.get("calibration_source", "none"),
+    }
+    return result
+
+
 @mcp.tool(timeout=10)
 def l6e_authorize_call(
     session_id: Annotated[str, "Session ID from l6e_run_start"],
@@ -275,6 +348,29 @@ def l6e_authorize_call(
     """Blocking gate: call before launching any sub-agent (actor_type='subagent') and at every stage boundary (planning, search, implement, test, debug). Pass the stage label in tool_name — there is no 'stage' parameter. Returns allow, reroute, or halt — proceed only on allow."""  # noqa: E501 — MCP tool docstring surfaces verbatim to agents; truncating it degrades guidance quality
     store = _get_session_store()
     session = _require_session(session_id, store=store)
+
+    use_actual = (
+        actual_prompt_tokens is not None and actual_completion_tokens is not None
+    )
+    api_key = _config.get_api_key()
+    if api_key and _config.is_cloud_sync_enabled() and not use_actual:
+        server_result = _try_server_authorize(
+            api_key=api_key,
+            session=session,
+            store=store,
+            tool_name=tool_name,
+            estimated_tokens=estimated_tokens,
+            estimated_prompt_tokens=estimated_prompt_tokens,
+            estimated_completion_tokens=estimated_completion_tokens,
+            actor_type=actor_type,
+            actor_id=actor_id,
+            actor_name=actor_name,
+            parent_call_id=parent_call_id,
+            call_mode=call_mode,
+        )
+        if server_result is not None:
+            return server_result
+
     decision = authorize_call(
         store=store,
         session=session,

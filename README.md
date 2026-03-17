@@ -79,4 +79,4 @@ This reads your run log (`~/.l6e/runs.jsonl`) and outputs a per-model calibratio
 
 ## License
 
-Apache 2.0
+MIT
