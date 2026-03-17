@@ -290,32 +290,31 @@ def test_drain_uses_default_timeout(tmp_path, monkeypatch):
 
 
 # ===========================================================================
-# Fix 6: l6e_run_end cloud sync in background
+# Fix 6: l6e_run_end cloud sync via outbox (no blocking HTTP)
 # ===========================================================================
 
 
-async def test_run_end_returns_before_cloud_sync(client, monkeypatch):
-    """l6e_run_end must not block on cloud sync — the POST happens in a background thread."""
+async def test_run_end_enqueues_to_outbox(client, monkeypatch, tmp_path):
+    """l6e_run_end enqueues the session report to the outbox for deferred sync."""
     monkeypatch.setenv("L6E_API_KEY", "sk-l6e-test-key")
     monkeypatch.setenv("L6E_CLOUD_SYNC", "1")
+    outbox_dir = tmp_path / "outbox"
+    monkeypatch.setenv("L6E_OUTBOX_DIR", str(outbox_dir))
 
     session = await start_session(client, budget_usd=1.0)
     session_id = session["session_id"]
 
-    def slow_try_send(*args, **kwargs):
-        time.sleep(5)
-        return True
-
-    with patch("l6e_mcp.outbox.try_send", side_effect=slow_try_send):
-        start = time.monotonic()
-        result = await client.call_tool(
-            "l6e_run_end",
-            {"session_id": session_id},
-            raise_on_error=False,
-        )
-        elapsed = time.monotonic() - start
+    start = time.monotonic()
+    result = await client.call_tool(
+        "l6e_run_end",
+        {"session_id": session_id},
+        raise_on_error=False,
+    )
+    elapsed = time.monotonic() - start
 
     assert not result.is_error
     assert elapsed < 2.0, (
-        f"l6e_run_end took {elapsed:.1f}s — cloud sync is still blocking the response"
+        f"l6e_run_end took {elapsed:.1f}s — should be fast with outbox-only sync"
     )
+    outbox_files = list(outbox_dir.glob("*.json"))
+    assert len(outbox_files) == 1, "session report should be enqueued to outbox"

@@ -540,11 +540,7 @@ def l6e_run_end(
     api_key = _config.get_api_key()
     if api_key and _config.is_cloud_sync_enabled():
         payload = build_session_report(session, summary, calls)
-        threading.Thread(
-            target=_try_send_or_enqueue,
-            args=(payload, api_key, _config.get_cloud_endpoint()),
-            daemon=True,
-        ).start()
+        _outbox.enqueue(payload)
 
     call_exactness_states = [ExactnessState(c.exactness_state) for c in calls]
     run_exactness = run_exactness_state(call_exactness_states)
