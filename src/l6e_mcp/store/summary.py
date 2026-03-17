@@ -119,6 +119,10 @@ def build_session_report(
                 "action": "reroute" if c.rerouted else "allow",
                 "actor_type": getattr(c, "actor_type", "parent_agent"),
                 "created_at": c.created_at,
+                "finished_at": (
+                    c.created_at + c.elapsed_ms / 1000.0
+                    if c.elapsed_ms > 0 else None
+                ),
             }
             for c in calls
         ],
