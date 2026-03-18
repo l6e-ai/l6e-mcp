@@ -298,6 +298,10 @@ def _try_server_authorize(
         "calibration_factor": server_resp.get("calibration_factor", 1.0),
         "calibration_source": server_resp.get("calibration_source", "none"),
     }
+    if "calibration_confidence" in server_resp:
+        result["calibration_confidence"] = server_resp["calibration_confidence"]
+    if "factor_range" in server_resp:
+        result["factor_range"] = server_resp["factor_range"]
     return result
 
 
