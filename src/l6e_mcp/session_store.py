@@ -80,8 +80,14 @@ class LocalSessionStore:
     def require_active_session(self, session_id: str) -> SessionState:
         return self._sessions.require_active(session_id)
 
-    def finalize_session(self, session_id: str, *, end_summary: str | None = None) -> SessionState:
-        return self._sessions.finalize(session_id, end_summary=end_summary)
+    def finalize_session(
+        self,
+        session_id: str,
+        *,
+        end_summary: str | None = None,
+        ended_at: float | None = None,
+    ) -> SessionState:
+        return self._sessions.finalize(session_id, end_summary=end_summary, ended_at=ended_at)
 
     def increment_checkpoint_calls(self, session_id: str, increment_by: int = 1) -> None:
         self._sessions.increment_checkpoint_calls(session_id, increment_by=increment_by)

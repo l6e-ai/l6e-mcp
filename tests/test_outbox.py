@@ -267,12 +267,12 @@ def test_recover_failure_does_not_block_others(tmp_path, monkeypatch):
 
     call_count = 0
 
-    def _mock_finalize(session_id):
+    def _mock_finalize(session_id, **kwargs):
         nonlocal call_count
         call_count += 1
         if session_id == "will_fail":
             raise RuntimeError("simulated failure")
-        return _original_finalize(session_id)
+        return _original_finalize(session_id, **kwargs)
 
     store = LocalSessionStore(db)
     _original_finalize = store.finalize_session

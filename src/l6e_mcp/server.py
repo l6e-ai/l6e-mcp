@@ -526,13 +526,14 @@ def l6e_run_end(
         )
     calls = store.list_calls_for_session(session_id)
     summary = session_run_summary(session, calls)
+    ended_at = max(c.created_at for c in calls) if calls else None
     log = (
         LocalRunLog(path=Path(session.log_path))
         if session.log_path is not None
         else LocalRunLog()
     )
     try:
-        store.finalize_session(session_id, end_summary=end_summary)
+        store.finalize_session(session_id, end_summary=end_summary, ended_at=ended_at)
     except KeyError as exc:
         raise ToolError(exc.args[0]) from exc
     log.append(summary)

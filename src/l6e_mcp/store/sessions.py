@@ -146,8 +146,15 @@ class SessionRepository:
             raise KeyError(f"Unknown session '{session_id}'. Already ended or never started.")
         return session
 
-    def finalize(self, session_id: str, *, end_summary: str | None = None) -> SessionState:
+    def finalize(
+        self,
+        session_id: str,
+        *,
+        end_summary: str | None = None,
+        ended_at: float | None = None,
+    ) -> SessionState:
         finalized_at = time.time()
+        effective_ended_at = ended_at if ended_at is not None else finalized_at
         with make_connection(self._path) as conn:
             row = conn.execute(
                 "SELECT state FROM sessions WHERE session_id = ?",
@@ -168,7 +175,7 @@ class SessionRepository:
                     end_summary = COALESCE(?, end_summary)
                 WHERE session_id = ?
                 """,
-                (finalized_at, finalized_at, end_summary, session_id),
+                (effective_ended_at, finalized_at, end_summary, session_id),
             )
         session = self.get(session_id)
         if session is None:

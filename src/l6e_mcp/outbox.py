@@ -162,7 +162,8 @@ def recover_stale_sessions(
             calls = store.list_calls_for_session(info.session_id)
             summary = session_run_summary(session, calls)
 
-            store.finalize_session(info.session_id)
+            last_call_at = max(c.created_at for c in calls) if calls else None
+            store.finalize_session(info.session_id, ended_at=last_call_at)
 
             log = (
                 LocalRunLog(path=Path(session.log_path))
