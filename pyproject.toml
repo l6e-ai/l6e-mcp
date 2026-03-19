@@ -24,7 +24,6 @@ dev = [
 
 [project.scripts]
 l6e-mcp = "l6e_mcp.server:main"
-l6e-calibration-generate = "l6e_mcp.tools.calibration_generator:main"
 
 [project.urls]
 Homepage = "https://github.com/l6e-ai/l6e-mcp"

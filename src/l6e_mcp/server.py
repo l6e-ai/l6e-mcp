@@ -16,7 +16,7 @@ from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 from l6e._log import LocalRunLog
 from l6e._types import BudgetMode, PipelinePolicy, UnknownModelPricingMode
-from l6e.costs import LiteLLMCostEstimator
+from l6e.costs import LiteLLMCostEstimator, refresh_model_cost_map_async
 
 from l6e_mcp import config as _config
 from l6e_mcp import outbox as _outbox
@@ -717,6 +717,7 @@ def l6e_run_end(
 
 
 def main() -> None:
+    refresh_model_cost_map_async()
     mcp.run()
 
 

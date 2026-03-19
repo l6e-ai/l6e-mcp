@@ -8,10 +8,6 @@ from l6e.gate import ConstraintGate
 from l6e.router import LocalRouter
 from l6e.store import InMemoryRunStore
 
-from l6e_mcp.calibration.config import (
-    load_calibration_config,
-    resolve_estimated_tokens,
-)
 from l6e_mcp.session_store import LocalSessionStore, SessionState
 
 
@@ -27,13 +23,6 @@ class AuthorizationDecision:
     pricing_confidence: str | None
     pricing_source: str | None
     model_pricing_known: bool | None
-    estimate_source: str | None
-    estimate_prompt_tokens: int | None
-    estimate_completion_tokens: int | None
-    calibration_multiplier: float | None
-    effective_multiplier: float | None
-    estimate_reasoning_tokens: int | None
-    internal_turns_multiplier: float | None
 
 
 def authorize_call(
@@ -70,29 +59,11 @@ def authorize_call(
         use_actual = True
         prompt_tokens = actual_prompt_tokens
         completion_tokens = actual_completion_tokens
-        estimate_source = "actual_tokens"
-        calibration_multiplier = 1.0
-        effective_multiplier = 1.0
-        estimate_reasoning_tokens = 0
-        internal_turns_multiplier = 1.0
     else:
         use_actual = False
-        calibration = load_calibration_config()
-        resolved = resolve_estimated_tokens(
-            stage=tool_name,
-            model=session.model,
-            estimated_tokens=estimated_tokens,
-            estimated_prompt_tokens=estimated_prompt_tokens,
-            estimated_completion_tokens=estimated_completion_tokens,
-            calibration=calibration,
-        )
-        prompt_tokens = resolved.prompt_tokens
-        completion_tokens = resolved.completion_tokens
-        estimate_source = resolved.source
-        calibration_multiplier = resolved.multiplier_applied
-        effective_multiplier = resolved.effective_multiplier
-        estimate_reasoning_tokens = resolved.reasoning_tokens
-        internal_turns_multiplier = resolved.internal_turns_multiplier
+        prompt_tokens = estimated_prompt_tokens or estimated_tokens or 2000
+        completion_tokens = estimated_completion_tokens or 400
+
     estimate_meta = estimator.estimate_with_metadata(
         session.model,
         prompt_tokens,
@@ -112,13 +83,6 @@ def authorize_call(
                 pricing_confidence=estimate_meta.pricing_confidence,
                 pricing_source=estimate_meta.pricing_source,
                 model_pricing_known=False,
-                estimate_source=estimate_source,
-                estimate_prompt_tokens=prompt_tokens,
-                estimate_completion_tokens=completion_tokens,
-                calibration_multiplier=calibration_multiplier,
-                effective_multiplier=effective_multiplier,
-                estimate_reasoning_tokens=estimate_reasoning_tokens,
-                internal_turns_multiplier=internal_turns_multiplier,
             )
         if mode == "reroute_required":
             local_model = LocalRouter().best_local_model()
@@ -132,13 +96,6 @@ def authorize_call(
                     pricing_confidence=estimate_meta.pricing_confidence,
                     pricing_source=estimate_meta.pricing_source,
                     model_pricing_known=False,
-                    estimate_source=estimate_source,
-                    estimate_prompt_tokens=prompt_tokens,
-                    estimate_completion_tokens=completion_tokens,
-                    calibration_multiplier=calibration_multiplier,
-                    effective_multiplier=effective_multiplier,
-                    estimate_reasoning_tokens=estimate_reasoning_tokens,
-                    internal_turns_multiplier=internal_turns_multiplier,
                 )
             local_meta = estimator.estimate_with_metadata(
                 local_model,
@@ -155,13 +112,6 @@ def authorize_call(
                     pricing_confidence=estimate_meta.pricing_confidence,
                     pricing_source=estimate_meta.pricing_source,
                     model_pricing_known=False,
-                    estimate_source=estimate_source,
-                    estimate_prompt_tokens=prompt_tokens,
-                    estimate_completion_tokens=completion_tokens,
-                    calibration_multiplier=calibration_multiplier,
-                    effective_multiplier=effective_multiplier,
-                    estimate_reasoning_tokens=estimate_reasoning_tokens,
-                    internal_turns_multiplier=internal_turns_multiplier,
                 )
             call = store.create_call(
                 session_id=session.session_id,
@@ -193,13 +143,6 @@ def authorize_call(
                 pricing_confidence=estimate_meta.pricing_confidence,
                 pricing_source=estimate_meta.pricing_source,
                 model_pricing_known=False,
-                estimate_source=estimate_source,
-                estimate_prompt_tokens=prompt_tokens,
-                estimate_completion_tokens=completion_tokens,
-                calibration_multiplier=calibration_multiplier,
-                effective_multiplier=effective_multiplier,
-                estimate_reasoning_tokens=estimate_reasoning_tokens,
-                internal_turns_multiplier=internal_turns_multiplier,
             )
 
     decision = gate.check(
@@ -224,13 +167,6 @@ def authorize_call(
             pricing_confidence=estimate_meta.pricing_confidence,
             pricing_source=estimate_meta.pricing_source,
             model_pricing_known=estimate_meta.model_pricing_known,
-            estimate_source=estimate_source,
-            estimate_prompt_tokens=prompt_tokens,
-            estimate_completion_tokens=completion_tokens,
-            calibration_multiplier=calibration_multiplier,
-            effective_multiplier=effective_multiplier,
-            estimate_reasoning_tokens=estimate_reasoning_tokens,
-            internal_turns_multiplier=internal_turns_multiplier,
         )
 
     model_used = decision.target_model if decision.action == "reroute" else session.model
@@ -267,11 +203,4 @@ def authorize_call(
         pricing_confidence=estimate_meta.pricing_confidence,
         pricing_source=estimate_meta.pricing_source,
         model_pricing_known=estimate_meta.model_pricing_known,
-        estimate_source=estimate_source,
-        estimate_prompt_tokens=prompt_tokens,
-        estimate_completion_tokens=completion_tokens,
-        calibration_multiplier=calibration_multiplier,
-        effective_multiplier=effective_multiplier,
-        estimate_reasoning_tokens=estimate_reasoning_tokens,
-        internal_turns_multiplier=internal_turns_multiplier,
     )
