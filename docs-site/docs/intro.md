@@ -61,9 +61,8 @@ That said, it still works. An agent told it has a $2 budget and that it must che
 |---|---|---|
 | `L6E_LOG_PATH` | `.l6e/runs.jsonl` (relative to cwd) | Override the run log path. **Always set this to an absolute path** (e.g. `~/.l6e/runs.jsonl`). The default is relative to the MCP server's working directory, which varies by client. |
 | `L6E_SESSION_DB_PATH` | `~/.l6e/sessions.db` | Override the local SQLite database path. |
-| `L6E_CALIBRATION_PATH` | _(unset)_ | Path to a JSON calibration file produced by `l6e-calibration-generate`. When set, per-model token-estimate calibration is applied automatically. |
 | `L6E_API_KEY` | _(unset)_ | API key for cloud sync. Get a key at [l6e.ai](https://l6e.ai). Can also be set in `~/.l6e/config.toml` as `api_key`. |
-| `L6E_CLOUD_SYNC` | `false` | Set to `1` or `true` to sync session run logs to the l6e cloud. Requires `L6E_API_KEY`. Can also be set in `~/.l6e/config.toml` as `cloud_sync = true`. |
+| `L6E_CLOUD_SYNC` | `false` | Set to `1` or `true` to sync session run logs to the l6e cloud. Requires `L6E_API_KEY`. |
 | `L6E_SEND_TASK_SUMMARIES` | `true` | Whether to include task summaries in cloud-synced session reports. Summaries are always stored locally regardless of this setting. |
 
 ## Exactness states

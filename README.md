@@ -49,21 +49,10 @@ If you need genuinely hard enforcement against actual spend, you can call `l6e_r
 |---|---|---|
 | `L6E_LOG_PATH` | `.l6e/runs.jsonl` (relative to cwd) | Override the run log path. **Always set this to an absolute path** (e.g. `/Users/you/.l6e/runs.jsonl`). The default is relative to the MCP server's working directory, which varies by client (Windsurf uses `/`; other clients vary). |
 | `L6E_SESSION_DB_PATH` | `~/.l6e/sessions.db` | Override the local SQLite database path. |
-| `L6E_CALIBRATION_PATH` | _(unset)_ | Path to a JSON calibration file produced by `l6e-calibration-generate`. When set, per-model token-estimate calibration is applied automatically. |
 | `L6E_API_KEY` | _(unset)_ | API key for cloud sync. When set alongside `L6E_CLOUD_SYNC=1`, sessions are uploaded to the l6e backend for team-level visibility and server-side calibration. |
 | `L6E_CLOUD_SYNC` | `false` | Set to `1`, `true`, or `yes` to enable cloud sync. Requires `L6E_API_KEY`. |
 | `L6E_CLOUD_ENDPOINT` | `https://api.l6e.ai` | Override the cloud sync endpoint. |
 | `L6E_CONFIG_PATH` | `~/.l6e/config.toml` | Override the config file path. The config file accepts `api_key`, `cloud_sync`, `cloud_endpoint`, and `send_task_summaries` keys. |
-
-## Calibration tool
-
-After running a few sessions, you can inspect how your estimates track against actuals and generate a calibration file:
-
-```bash
-l6e-calibration-generate
-```
-
-This reads your run log (`~/.l6e/runs.jsonl`) and outputs a per-model calibration JSON file. Point `L6E_CALIBRATION_PATH` at it to have future estimates use the corrected multipliers.
 
 ## Exactness states
 
