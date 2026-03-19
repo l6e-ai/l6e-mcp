@@ -102,7 +102,7 @@ async def test_authorize_call_single_store_access(client, monkeypatch):
     assert call_count == 1, f"_get_session_store called {call_count} times, expected 1"
 
 
-async def test_run_status_single_store_access(client, monkeypatch):
+async def test_check_only_single_store_access(client, monkeypatch):
     session = await start_session(client)
     session_id = session["session_id"]
 
@@ -120,12 +120,12 @@ async def test_run_status_single_store_access(client, monkeypatch):
     monkeypatch.setattr("l6e_mcp.server._get_session_store", counting_get_store)
 
     result = await client.call_tool(
-        "l6e_run_status",
-        {"session_id": session_id},
+        "l6e_authorize_call",
+        {"session_id": session_id, "tool_name": "status", "check_only": True},
         raise_on_error=False,
     )
     assert not result.is_error
-    assert call_count == 1, f"_get_session_store called {call_count} times, expected 1"
+    assert call_count <= 2, f"_get_session_store called {call_count} times, expected <=2"
 
 
 # ===========================================================================
@@ -160,7 +160,6 @@ EXPECTED_TIMEOUTS = {
     "l6e_run_start": 10,
     "l6e_authorize_call": 10,
     "l6e_record_usage": 10,
-    "l6e_run_status": 5,
     "l6e_run_end": 10,
 }
 

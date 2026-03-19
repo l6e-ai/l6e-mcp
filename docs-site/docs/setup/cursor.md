@@ -43,7 +43,7 @@ Add the following to your MCP configuration file.
 }
 ```
 
-`L6E_LOG_PATH` is recommended. Cursor spawns MCP servers as child processes, so without it `runs.jsonl` will be written relative to wherever the Cursor process started — which is not always your project directory, particularly with a global config.
+`L6E_LOG_PATH` should always be an absolute path. Cursor spawns MCP servers as child processes, so without it `runs.jsonl` will be written relative to wherever the Cursor process started — which is not always your project directory, particularly with a global config.
 
 `L6E_API_KEY` and `L6E_CLOUD_SYNC` are optional — omit them to run fully local. When set, session run logs are synced to the l6e cloud after each `l6e_run_end`.
 
@@ -68,12 +68,11 @@ If you installed `l6e-mcp` manually instead of using `uvx`:
 
 ## Verify
 
-Open **Cursor Settings → Features → MCP**. The `l6e-budget` server should appear with a green dot and five tools listed:
+Open **Cursor Settings → Features → MCP**. The `l6e-budget` server should appear with a green dot and four tools listed:
 
 - `l6e_run_start`
 - `l6e_authorize_call`
 - `l6e_record_usage`
-- `l6e_run_status`
 - `l6e_run_end`
 
 The "No MCP resources available" message in Cursor chat is expected and harmless — l6e-budget exposes tools, not resources. If the server dot is red, check that `uvx` is on your PATH (`which uvx`) or that `l6e-mcp` is installed (`pip show l6e-mcp`).

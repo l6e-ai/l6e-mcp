@@ -39,6 +39,12 @@ def enqueue(payload: dict) -> Path:
     return path
 
 
+def remove(session_id: str) -> None:
+    """Delete the outbox file for a session. No-op if already gone."""
+    path = _outbox_dir() / f"{session_id}.json"
+    path.unlink(missing_ok=True)
+
+
 def try_send(
     payload: dict,
     api_key: str,

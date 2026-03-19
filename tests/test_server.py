@@ -40,7 +40,6 @@ async def test_tool_discovery_exposes_canonical_names_only(client):
         "l6e_run_start",
         "l6e_authorize_call",
         "l6e_record_usage",
-        "l6e_run_status",
         "l6e_run_end",
     }
 
@@ -277,18 +276,15 @@ async def test_reconcile_unknown_call_is_tool_error(client):
     assert result.is_error is True
 
 
-async def test_spend_is_readonly(client):
+async def test_check_only_is_readonly(client):
     session = await start_session(client, budget_usd=5.0)
-    r1 = await client.call_tool(
-        "l6e_run_status",
-        {"session_id": session["session_id"]},
-        raise_on_error=False,
-    )
-    r2 = await client.call_tool(
-        "l6e_run_status",
-        {"session_id": session["session_id"]},
-        raise_on_error=False,
-    )
+    args = {
+        "session_id": session["session_id"],
+        "tool_name": "status",
+        "check_only": True,
+    }
+    r1 = await client.call_tool("l6e_authorize_call", args, raise_on_error=False)
+    r2 = await client.call_tool("l6e_authorize_call", args, raise_on_error=False)
     assert not r1.is_error
     assert not r2.is_error
     assert r1.data["remaining_usd"] == r2.data["remaining_usd"]
@@ -489,7 +485,7 @@ async def test_unknown_model_pricing_reroutes_when_local_model_priced(client, mo
 
 
 async def test_estimate_only_mode_omits_net_savings_and_includes_note(client, tmp_path):
-    """In estimate-only mode, l6e_run_status omits overhead/savings fields.
+    """In estimate-only mode, check_only omits overhead/savings fields.
     l6e_run_end reports savings_confidence, and the JSONL log contains the full summary."""
     session = await start_session(client, budget_usd=10.0, model="gpt-4o")
     await client.call_tool(
@@ -499,8 +495,8 @@ async def test_estimate_only_mode_omits_net_savings_and_includes_note(client, tm
     )
 
     status = await client.call_tool(
-        "l6e_run_status",
-        {"session_id": session["session_id"]},
+        "l6e_authorize_call",
+        {"session_id": session["session_id"], "tool_name": "status", "check_only": True},
         raise_on_error=False,
     )
     assert not status.is_error
@@ -550,8 +546,8 @@ async def test_exact_mode_includes_net_savings_usd(client, tmp_path):
     )
 
     status = await client.call_tool(
-        "l6e_run_status",
-        {"session_id": session["session_id"]},
+        "l6e_authorize_call",
+        {"session_id": session["session_id"], "tool_name": "status", "check_only": True},
         raise_on_error=False,
     )
     assert not status.is_error
@@ -588,10 +584,14 @@ async def test_run_start_invalid_unknown_model_pricing_mode(client):
     assert "warn_only" in error_text
 
 
-async def test_run_status_unknown_session_returns_error(client):
+async def test_authorize_check_only_unknown_session_returns_error(client):
     result = await client.call_tool(
-        "l6e_run_status",
-        {"session_id": "session_unknown_2026-03-12_deadbeef"},
+        "l6e_authorize_call",
+        {
+            "session_id": "session_unknown_2026-03-12_deadbeef",
+            "tool_name": "status",
+            "check_only": True,
+        },
         raise_on_error=False,
     )
     assert result.is_error
@@ -747,18 +747,19 @@ async def test_authorize_call_no_correlation_block_in_oss_mode(client):
 
 
 # ---------------------------------------------------------------------------
-# Slim response shape + required estimate — l6e_run_status
+# check_only mode — l6e_authorize_call
 # ---------------------------------------------------------------------------
 
 
-async def test_run_status_response_is_slim(client):
-    """l6e_run_status must return a minimal decision-relevant snapshot.
-    Dashboard-only fields (calls_made, reroutes) must not appear."""
+async def test_authorize_check_only_response_is_slim(client):
+    """check_only=True must return a minimal snapshot without gate fields."""
     session = await start_session(client, budget_usd=5.0, model="gpt-4o")
     result = await client.call_tool(
-        "l6e_run_status",
+        "l6e_authorize_call",
         {
             "session_id": session["session_id"],
+            "tool_name": "status",
+            "check_only": True,
             "estimated_prompt_tokens": 1000,
             "estimated_completion_tokens": 200,
         },
@@ -771,18 +772,19 @@ async def test_run_status_response_is_slim(client):
     assert "remaining_usd" in data
     assert "pct_used" in data
 
-    for field in ("calls_made", "reroutes", "spent_usd"):
-        assert field not in data, f"Dashboard field '{field}' should not appear in slim status"
+    for field in ("action", "call_id", "reason", "calls_made", "reroutes", "spent_usd"):
+        assert field not in data, f"Field '{field}' should not appear in check_only response"
 
 
-async def test_run_status_accepts_estimate_params(client):
-    """l6e_run_status must accept estimated_prompt_tokens and
-    estimated_completion_tokens without error."""
+async def test_authorize_check_only_accepts_estimates(client):
+    """check_only=True must accept estimated token params without error."""
     session = await start_session(client, budget_usd=5.0, model="gpt-4o")
     result = await client.call_tool(
-        "l6e_run_status",
+        "l6e_authorize_call",
         {
             "session_id": session["session_id"],
+            "tool_name": "status",
+            "check_only": True,
             "estimated_prompt_tokens": 3000,
             "estimated_completion_tokens": 600,
         },
@@ -790,6 +792,178 @@ async def test_run_status_accepts_estimate_params(client):
     )
     assert not result.is_error
     assert result.data["budget_pressure"] in ("low", "moderate", "high", "critical")
+
+
+async def test_authorize_check_only_projects_cost(client):
+    """check_only=True with large token estimates must project higher spend
+    than with small estimates, and projections must be transient."""
+    session = await start_session(client, budget_usd=5.0, model="gpt-4o")
+    sid = session["session_id"]
+
+    small = await client.call_tool(
+        "l6e_authorize_call",
+        {
+            "session_id": sid,
+            "tool_name": "status",
+            "check_only": True,
+            "estimated_prompt_tokens": 100,
+            "estimated_completion_tokens": 50,
+        },
+        raise_on_error=False,
+    )
+    assert not small.is_error
+
+    large = await client.call_tool(
+        "l6e_authorize_call",
+        {
+            "session_id": sid,
+            "tool_name": "status",
+            "check_only": True,
+            "estimated_prompt_tokens": 5000,
+            "estimated_completion_tokens": 1000,
+        },
+        raise_on_error=False,
+    )
+    assert not large.is_error
+    assert large.data["remaining_usd"] < small.data["remaining_usd"]
+    assert large.data["pct_used"] > small.data["pct_used"]
+
+    repeat_small = await client.call_tool(
+        "l6e_authorize_call",
+        {
+            "session_id": sid,
+            "tool_name": "status",
+            "check_only": True,
+            "estimated_prompt_tokens": 100,
+            "estimated_completion_tokens": 50,
+        },
+        raise_on_error=False,
+    )
+    assert not repeat_small.is_error
+    assert repeat_small.data["remaining_usd"] == small.data["remaining_usd"], (
+        "Projection must be transient — no call record should persist"
+    )
+
+
+async def test_authorize_check_only_does_not_create_call_record(client):
+    """check_only=True must not create a call record in the store."""
+    session = await start_session(client, budget_usd=5.0, model="gpt-4o")
+    sid = session["session_id"]
+
+    await client.call_tool(
+        "l6e_authorize_call",
+        {
+            "session_id": sid,
+            "tool_name": "status",
+            "check_only": True,
+            "estimated_prompt_tokens": 2000,
+            "estimated_completion_tokens": 400,
+        },
+        raise_on_error=False,
+    )
+    calls = LocalSessionStore().list_calls_for_session(sid)
+    assert len(calls) == 0, "check_only must not create a call record"
+
+
+async def test_authorize_check_only_uses_cached_calibration(client):
+    """When calibration cache is populated, check_only must apply the factor."""
+    from l6e_mcp.server import _get_calibration_cache
+
+    session = await start_session(client, budget_usd=5.0, model="gpt-4o")
+    sid = session["session_id"]
+
+    uncalibrated = await client.call_tool(
+        "l6e_authorize_call",
+        {
+            "session_id": sid,
+            "tool_name": "status",
+            "check_only": True,
+            "estimated_prompt_tokens": 2000,
+            "estimated_completion_tokens": 400,
+        },
+        raise_on_error=False,
+    )
+    assert not uncalibrated.is_error
+    assert "calibration_applied" not in uncalibrated.data
+
+    _get_calibration_cache().update(
+        sid, factor=5.0, source="test", confidence="high",
+    )
+
+    calibrated = await client.call_tool(
+        "l6e_authorize_call",
+        {
+            "session_id": sid,
+            "tool_name": "status",
+            "check_only": True,
+            "estimated_prompt_tokens": 2000,
+            "estimated_completion_tokens": 400,
+        },
+        raise_on_error=False,
+    )
+    assert not calibrated.is_error
+    assert calibrated.data.get("calibration_applied") is True
+    assert calibrated.data["remaining_usd"] < uncalibrated.data["remaining_usd"]
+
+
+async def test_authorize_check_only_falls_back_when_cache_expired(client):
+    """Expired cache entry must not be used — fallback to uncalibrated."""
+    from l6e_mcp.server import _get_calibration_cache
+
+    session = await start_session(client, budget_usd=5.0, model="gpt-4o")
+    sid = session["session_id"]
+
+    _get_calibration_cache().update(
+        sid, factor=5.0, source="test", confidence="high",
+    )
+    _get_calibration_cache()._entries[sid] = _get_calibration_cache()._entries[sid].__class__(
+        factor=5.0,
+        source="test",
+        confidence="high",
+        factor_range=None,
+        fetched_at=0.0,  # epoch — long expired
+    )
+
+    result = await client.call_tool(
+        "l6e_authorize_call",
+        {
+            "session_id": sid,
+            "tool_name": "status",
+            "check_only": True,
+            "estimated_prompt_tokens": 2000,
+            "estimated_completion_tokens": 400,
+        },
+        raise_on_error=False,
+    )
+    assert not result.is_error
+    assert "calibration_applied" not in result.data
+
+
+async def test_authorize_check_only_increments_status_calls_not_checkpoint(client):
+    """check_only=True must increment status_calls, not checkpoint_calls."""
+    session = await start_session(client, budget_usd=5.0, model="gpt-4o")
+    sid = session["session_id"]
+    store = LocalSessionStore()
+
+    before = store.get_session(sid)
+    assert before is not None
+    initial_status = before.status_calls
+    initial_checkpoint = before.checkpoint_calls
+
+    await client.call_tool(
+        "l6e_authorize_call",
+        {
+            "session_id": sid,
+            "tool_name": "status",
+            "check_only": True,
+        },
+        raise_on_error=False,
+    )
+
+    after = store.get_session(sid)
+    assert after is not None
+    assert after.status_calls == initial_status + 1
+    assert after.checkpoint_calls == initial_checkpoint
 
 
 # ---------------------------------------------------------------------------

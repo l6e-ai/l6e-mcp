@@ -271,7 +271,9 @@ class TestCalibratedSpendAccumulation:
             await _authorize(client, session_id)
 
         status = await client.call_tool(
-            "l6e_run_status", {"session_id": session_id}, raise_on_error=False,
+            "l6e_authorize_call",
+            {"session_id": session_id, "tool_name": "status", "check_only": True},
+            raise_on_error=False,
         )
         assert not status.is_error
         spent = status.data["pct_used"]

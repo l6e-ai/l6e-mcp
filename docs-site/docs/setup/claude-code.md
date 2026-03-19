@@ -43,6 +43,8 @@ claude mcp add --scope project \
 
 The `--` between the env vars and the server name is required — `-e` accepts multiple values, so without it the CLI treats the server name as a second env var and errors.
 
+`L6E_LOG_PATH` should always be an absolute path. Claude Code spawns MCP servers as child processes, and the working directory is not guaranteed to be your project root.
+
 `L6E_API_KEY` and `L6E_CLOUD_SYNC` are optional — omit them to run fully local. When set, session run logs are synced to the l6e cloud after each `l6e_run_end`.
 
 If `uvx` is not on the PATH that Claude Code sees, use the full path:
@@ -88,12 +90,11 @@ Run `/mcp` in the interactive REPL, or from the terminal:
 claude mcp list
 ```
 
-The `l6e-budget` server should appear with five tools listed:
+The `l6e-budget` server should appear with four tools listed:
 
 - `l6e_run_start`
 - `l6e_authorize_call`
 - `l6e_record_usage`
-- `l6e_run_status`
 - `l6e_run_end`
 
 If the server does not appear, check that `uvx` is on your PATH (`which uvx`) or that `l6e-mcp` is installed (`pip show l6e-mcp`).

@@ -7,7 +7,7 @@
 
 Session-scoped budget enforcement for AI coding assistants via the [Model Context Protocol](https://modelcontextprotocol.io/).
 
-Wraps the [l6e](https://github.com/l6e-ai/l6e) core enforcement runtime and exposes five MCP tools that let Cursor, Claude Code, Windsurf, and OpenClaw enforce per-session LLM budgets.
+Wraps the [l6e](https://github.com/l6e-ai/l6e) core enforcement runtime and exposes four MCP tools that let Cursor, Claude Code, Windsurf, and OpenClaw enforce per-session LLM budgets.
 
 ## Install
 
@@ -20,16 +20,15 @@ pip install l6e-mcp
 | Tool | Purpose |
 |---|---|
 | `l6e_run_start` | Open a new budget session. Accepts `task_summary`, `accounting_mode`, `unknown_model_pricing_mode`, and per-mode exactness overrides. Returns `session_id`. |
-| `l6e_authorize_call` | Blocking gate before sub-agents (`actor_type='subagent'`) and stage transitions. Returns `allow`, `reroute`, or `halt` with a `call_id`. Pass `actual_prompt_tokens` + `actual_completion_tokens` to reconcile inline instead of a separate `l6e_record_usage` call. |
+| `l6e_authorize_call` | Blocking gate before sub-agents (`actor_type='subagent'`) and stage transitions. Returns `allow`, `reroute`, or `halt` with a `call_id`. Pass `check_only=True` for a lightweight budget pressure check without recording a call. Pass `actual_prompt_tokens` + `actual_completion_tokens` to reconcile inline instead of a separate `l6e_record_usage` call. |
 | `l6e_record_usage` | Attach exact token usage to an existing `call_id` (idempotent). |
-| `l6e_run_status` | Read-only spend snapshot. Pass `estimated_prompt_tokens` + `estimated_completion_tokens` for a cost-projection assessment before the next stage. |
 | `l6e_run_end` | Close the session and flush the run log to `.l6e/runs.jsonl`. Returns exactness state, mode coverage gaps, and pending reconciliation count. |
 
 ## Running locally without a backend proxy
 
 When you run `l6e-mcp` without a remote backend proxy, **all budget accounting is based on token estimates that the agent constructs before each call**. There is currently no way for an MCP server to intercept the actual token counts from your LLM provider in real time — the MCP protocol does not expose that response data.
 
-This means the numbers are approximate. The cost you see in `l6e_run_status` reflects what the agent guessed it was about to spend, not what your provider actually billed.
+This means the numbers are approximate. The cost you see in `l6e_authorize_call` with `check_only=True` reflects what the agent guessed it was about to spend, not what your provider actually billed.
 
 That said, it still works. An agent that is told it has a $2 budget and must check before spending tends to scope tasks more tightly, launch fewer sub-agents, and stop earlier when a task turns out to be more expensive than expected. The behavioral effect — the agent knowing it has a finite budget and that it is spending money — is present even when the accounting is not exact.
 
@@ -48,7 +47,7 @@ If you need genuinely hard enforcement against actual spend, you can call `l6e_r
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `L6E_LOG_PATH` | `.l6e/runs.jsonl` (relative to cwd) | Override the run log path. **Required for Windsurf; strongly recommended for Cursor, Claude Code, and OpenClaw** — see setup guides. |
+| `L6E_LOG_PATH` | `.l6e/runs.jsonl` (relative to cwd) | Override the run log path. **Always set this to an absolute path** (e.g. `/Users/you/.l6e/runs.jsonl`). The default is relative to the MCP server's working directory, which varies by client (Windsurf uses `/`; other clients vary). |
 | `L6E_SESSION_DB_PATH` | `~/.l6e/sessions.db` | Override the local SQLite database path. |
 | `L6E_CALIBRATION_PATH` | _(unset)_ | Path to a JSON calibration file produced by `l6e-calibration-generate`. When set, per-model token-estimate calibration is applied automatically. |
 | `L6E_API_KEY` | _(unset)_ | API key for cloud sync. When set alongside `L6E_CLOUD_SYNC=1`, sessions are uploaded to the l6e backend for team-level visibility and server-side calibration. |
@@ -68,18 +67,53 @@ This reads your run log (`~/.l6e/runs.jsonl`) and outputs a per-model calibratio
 
 ## Exactness states
 
-`l6e_run_status` reports an `exactness_state` for the current session:
+`l6e_run_end` returns an `exactness_state` for the completed session:
 
 - `all_estimate_only` — all calls used pre-call estimates
 - `partial_exact` — some calls have been reconciled with exact usage
 - `fully_exact_for_supported_calls` — all reconcilable calls have exact usage
 - `exactness_degraded` — reconciliation expected but not received for some calls
 
+`l6e_run_end` also returns `pending_exact_calls` (calls that had not yet been
+reconciled at close), `last_reconciled_at`, `mode_coverage`, and
+`mode_coverage_gaps` to show which IDE modes had exact accounting available.
+
+`l6e_authorize_call` with `check_only=True` does not report exactness state
+mid-session — it is intentionally lightweight. See [Mode coverage](#mode-coverage)
+for how to configure exactness expectations per mode.
+
+## Mode coverage
+
+`l6e_run_start` accepts per-mode exactness capability overrides to reflect
+what your setup can actually reconcile:
+
+```json
+{
+  "ask_mode_exact_capable": false,
+  "plan_mode_exact_capable": false,
+  "agent_mode_exact_capable": false
+}
+```
+
+Default expectations by `usage_channel`:
+
+| usage_channel | Ask | Plan | Agent |
+|---|---|---|---|
+| `none` (default) | no | no | no |
+| `self_hosted_relay` | yes | yes | no |
+| `hosted_edge` | yes | yes | yes |
+| `manual_import` | no | no | no |
+
+When a mode is marked exact-capable but no reconciliation arrives, that mode
+appears in `mode_coverage_gaps` in the `l6e_run_end` response and the run
+state is `exactness_degraded`.
+
 ## Known limitations
 
-- **Rerouting is advisory only.** When `l6e_authorize_call` returns `"action": "reroute"`, it signals the agent to prompt the user to select a cheaper model. The MCP protocol has no primitive for forcing a model switch.
+- **Rerouting requires a local Ollama instance.** When `l6e_authorize_call` returns `"action": "reroute"`, the local router needs a running Ollama process with a compatible model installed. Without it, rerouting cannot be executed. The MCP protocol also has no primitive for forcing a model switch — reroute is always advisory, signaling the agent to prompt the user to select a cheaper model in their IDE settings.
 - **Local persistence only.** Sessions persist in a local SQLite database; there is no remote sync or team-level control plane in the OSS version.
 - **Estimate-first by default.** Exact real-time accounting requires `l6e_record_usage` calls from your agent with the actual token counts after each LLM call completes.
+- **Savings shows $0 when model pricing is unknown.** If the cost estimator returns `0.0` for either the requested or rerouted model, `savings_usd` in the run summary will be `0.0` regardless of any actual price difference. This happens when a model ID is not recognized by the LiteLLM pricing table. Check `savings_confidence` in `l6e_run_end` to gauge reliability.
 
 ## License
 

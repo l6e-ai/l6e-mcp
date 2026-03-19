@@ -20,7 +20,7 @@ This document describes how `l6e-mcp` works when running entirely locally — no
 
 The MCP protocol has no mechanism for a server to intercept the response from your LLM provider. When your agent makes an LLM call, `l6e-mcp` never sees the provider's response envelope and cannot read the actual `prompt_tokens` and `completion_tokens` from it.
 
-This means every call is accounted for using the token estimate the agent provides to `l6e_authorize_call` before the call goes out. The accumulated spend shown in `l6e_run_status` reflects those estimates, not your provider's billing records.
+This means every call is accounted for using the token estimate the agent provides to `l6e_authorize_call` before the call goes out. The accumulated spend shown in `l6e_authorize_call` with `check_only=True` reflects those estimates, not your provider's billing records.
 
 The estimates are reasonable for most models with known pricing (Claude, GPT-4, Gemini), but they will drift from actuals depending on how accurately the agent guesses token counts for each operation.
 
@@ -37,7 +37,7 @@ The gate is a forcing function for proportionality. The agent knowing it has a $
 
 ## Practical guidance for starting out
 
-**Use small budgets.** Start with $1–3 per session and run a few tasks. After each session, compare what `l6e_run_status` reported as total spend against what your provider's dashboard shows for the same time window.
+**Use small budgets.** Start with $1–3 per session and run a few tasks. After each session, compare what `l6e_authorize_call` reported as total spend against what your provider's dashboard shows for the same time window.
 
 Common sources of drift:
 
@@ -49,7 +49,7 @@ Common sources of drift:
 
 ## The accounting path, precisely
 
-The session opens in `estimate_only` accounting mode. This is visible in `l6e_run_status` as `accounting_mode: "estimate_only"`.
+The session opens in `estimate_only` accounting mode.
 
 Each `l6e_authorize_call` call:
 1. Reads persisted spend from the local SQLite store
