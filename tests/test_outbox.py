@@ -43,6 +43,17 @@ def test_enqueue_creates_file(tmp_path):
     assert data["session_id"] == "session_test_001"
 
 
+def test_remove_deletes_existing_file(tmp_path):
+    path = outbox.enqueue(_sample_payload("session_to_remove"))
+    assert path.exists()
+    outbox.remove("session_to_remove")
+    assert not path.exists()
+
+
+def test_remove_noop_when_missing():
+    outbox.remove("session_nonexistent")
+
+
 def test_try_send_success():
     payload = _sample_payload()
     with patch("l6e_mcp.outbox.httpx") as mock_httpx:

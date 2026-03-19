@@ -1,6 +1,7 @@
 """l6e-mcp server — session-scoped budget enforcement via FastMCP."""
 from __future__ import annotations
 
+import atexit
 import logging
 import os
 import secrets
@@ -24,6 +25,7 @@ from l6e_mcp.core.authorization import authorize_call
 from l6e_mcp.core.calibration_cache import CalibrationCache
 from l6e_mcp.core.exactness import run_exactness_state
 from l6e_mcp.core.remote_authorize import try_remote_authorize
+from l6e_mcp.core.session_report_worker import SessionReportWorker
 from l6e_mcp.core.status_telemetry import StatusTelemetryPayload, StatusTelemetryWorker
 from l6e_mcp.session_store import (
     LocalSessionStore,
@@ -136,6 +138,47 @@ def _reset_telemetry_worker() -> None:
         if _telemetry_worker is not None:
             _telemetry_worker.shutdown(timeout=0.5)
         _telemetry_worker = None
+
+
+_report_worker: SessionReportWorker | None = None
+_report_worker_lock = threading.Lock()
+_report_worker_atexit_registered = False
+
+
+def _get_report_worker() -> SessionReportWorker | None:
+    """Return the report worker if cloud sync is enabled, else None."""
+    global _report_worker, _report_worker_atexit_registered  # noqa: PLW0603
+    api_key = _config.get_api_key()
+    if not api_key or not _config.is_cloud_sync_enabled():
+        return None
+    if _report_worker is not None:
+        return _report_worker
+    with _report_worker_lock:
+        if _report_worker is not None:
+            return _report_worker
+        _report_worker = SessionReportWorker(
+            api_key=api_key, endpoint=_config.get_cloud_endpoint(),
+        )
+        if not _report_worker_atexit_registered:
+            atexit.register(_shutdown_report_worker)
+            _report_worker_atexit_registered = True
+        return _report_worker
+
+
+def _shutdown_report_worker() -> None:
+    """Flush pending session reports on clean process exit."""
+    if _report_worker is not None:
+        _report_worker.shutdown(timeout=5.0)
+
+
+def _reset_report_worker() -> None:
+    """Clear the cached singleton. Used by tests for isolation."""
+    global _report_worker, _report_worker_atexit_registered  # noqa: PLW0603
+    with _report_worker_lock:
+        if _report_worker is not None:
+            _report_worker.shutdown(timeout=0.5)
+        _report_worker = None
+        _report_worker_atexit_registered = False
 
 
 def _require_session(
@@ -635,6 +678,9 @@ def l6e_run_end(
     if api_key and _config.is_cloud_sync_enabled():
         payload = build_session_report(session, summary, calls)
         _outbox.enqueue(payload)
+        worker = _get_report_worker()
+        if worker is not None:
+            worker.enqueue(payload)
 
     call_exactness_states = [ExactnessState(c.exactness_state) for c in calls]
     run_exactness = run_exactness_state(call_exactness_states)
