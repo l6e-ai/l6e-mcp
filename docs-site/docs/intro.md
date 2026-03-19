@@ -12,6 +12,10 @@ slug: /
 
 Wraps the [l6e](https://github.com/l6e-ai/l6e) core enforcement runtime and exposes five MCP tools that let Cursor, Claude Code, Windsurf, and OpenClaw enforce per-session LLM budgets.
 
+:::tip Prompt Guide
+Read the **[Prompt Guide](prompt-guide)** for practical patterns that make budget enforcement work well — including how to prompt through a full plan → implement → review lifecycle.
+:::
+
 ## Quickstart
 
 ```bash

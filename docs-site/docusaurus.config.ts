@@ -105,6 +105,7 @@ const config: Config = {
           title: 'Docs',
           items: [
             {label: 'Introduction', to: '/'},
+            {label: 'Prompt Guide', to: '/prompt-guide'},
             {label: 'Setup: Cursor', to: '/setup/cursor'},
             {label: 'Setup: Claude Code', to: '/setup/claude-code'},
             {label: 'Local Enforcement', to: '/concepts/local-estimate-only'},

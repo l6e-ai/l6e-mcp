@@ -298,6 +298,10 @@ def _try_server_authorize(
         "calibration_factor": server_resp.get("calibration_factor", 1.0),
         "calibration_source": server_resp.get("calibration_source", "none"),
     }
+    if "calibration_confidence" in server_resp:
+        result["calibration_confidence"] = server_resp["calibration_confidence"]
+    if "factor_range" in server_resp:
+        result["factor_range"] = server_resp["factor_range"]
     return result
 
 
@@ -526,13 +530,14 @@ def l6e_run_end(
         )
     calls = store.list_calls_for_session(session_id)
     summary = session_run_summary(session, calls)
+    ended_at = max(c.created_at for c in calls) if calls else None
     log = (
         LocalRunLog(path=Path(session.log_path))
         if session.log_path is not None
         else LocalRunLog()
     )
     try:
-        store.finalize_session(session_id, end_summary=end_summary)
+        store.finalize_session(session_id, end_summary=end_summary, ended_at=ended_at)
     except KeyError as exc:
         raise ToolError(exc.args[0]) from exc
     log.append(summary)

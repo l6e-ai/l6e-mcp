@@ -47,6 +47,13 @@ Pass `model` as the exact active billing model ID (or `"unknown"`), and set `cli
 - Pass `parent_call_id` when work is delegated from a specific parent call.
 - Parent agent calls `l6e_run_start` and `l6e_run_end`; sub-agents never do.
 
+## Budget sizing
+When `l6e_authorize_call` returns a `calibration_factor` greater than 15x, inform the user that calibrated costs are significantly higher than raw token pricing. At high calibration factors, budgets under $3 may only cover exploration. For implementation tasks, suggest $3-5 minimum. Do not silently proceed with a budget likely to halt mid-task.
+
+When `calibration_confidence` is `"low"`, tell the user: "Calibration is based on limited data — actual costs may vary significantly from budget estimates. Consider importing more billing data for better accuracy." Do not alter gate behavior — the factor is still the best available estimate.
+
+When `calibration_confidence` is `"medium"`, no special messaging is needed. Proceed normally.
+
 ## Session safety
 - One session per task; do not reuse a `session_id` across separate user requests.
 - Never recover or infer `session_id` from transcripts, terminal history, or screenshots.

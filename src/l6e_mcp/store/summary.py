@@ -100,6 +100,10 @@ def build_session_report(
         (c.raw_estimated_cost_usd or c.estimated_cost_usd) for c in calls
     ) if has_raw_costs else None
 
+    session_ended_at = (
+        max(c.created_at for c in calls) if calls else session.created_at
+    )
+
     report: dict = {
         "session_id": session.session_id,
         "model": session.model,
@@ -109,6 +113,8 @@ def build_session_report(
         "reroutes": summary.reroutes,
         "savings_confidence": summary.savings_confidence,
         "accounting_mode": session.accounting_mode,
+        "session_started_at": session.created_at,
+        "session_ended_at": session_ended_at,
     }
     if raw_total is not None:
         report["raw_total_cost_usd"] = float(round(float(raw_total), 8))
