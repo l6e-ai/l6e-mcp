@@ -10,7 +10,7 @@ slug: /
 
 **Session-scoped budget enforcement for AI coding assistants via the [Model Context Protocol](https://modelcontextprotocol.io/).**
 
-Wraps the [l6e](https://github.com/l6e-ai/l6e) core enforcement runtime and exposes five MCP tools that let Cursor, Claude Code, Windsurf, and OpenClaw enforce per-session LLM budgets.
+Wraps the [l6e](https://github.com/l6e-ai/l6e) core enforcement runtime and exposes four MCP tools that let Cursor, Claude Code, Windsurf, and OpenClaw enforce per-session LLM budgets.
 
 :::tip Prompt Guide
 Read the **[Prompt Guide](prompt-guide)** for practical patterns that make budget enforcement work well — including how to prompt through a full plan → implement → review lifecycle.
@@ -34,9 +34,8 @@ Then follow the setup guide for your editor:
 | Tool | Purpose |
 |---|---|
 | `l6e_run_start` | Open a new budget session. Returns `session_id`. |
-| `l6e_authorize_call` | Gate-check a pending tool call and return a `call_id` with correlation hints. |
+| `l6e_authorize_call` | Gate-check a pending tool call and return a `call_id`. Pass `check_only=True` for a lightweight budget pressure check without recording a call. |
 | `l6e_record_usage` | Attach exact token usage to an existing `call_id` (idempotent). |
-| `l6e_run_status` | Read-only spend snapshot. Pass `estimated_prompt_tokens` + `estimated_completion_tokens` for a cost projection of the next stage. |
 | `l6e_run_end` | Close the session and flush the run log to `.l6e/runs.jsonl`. Returns exactness state, mode coverage gaps, and pending reconciliation count. |
 
 ## How it works
@@ -50,7 +49,7 @@ Then follow the setup guide for your editor:
 
 When you run `l6e-mcp` without a remote backend proxy, **all budget accounting is based on token estimates that the agent constructs before each call**. The MCP protocol does not expose provider response data in real time, so actual token counts are never visible to the server.
 
-This means numbers are approximate. The cost shown in `l6e_run_status` reflects what the agent estimated it was about to spend, not what your provider billed.
+This means numbers are approximate. The cost shown in `l6e_authorize_call` with `check_only=True` reflects what the agent estimated it was about to spend, not what your provider billed.
 
 That said, it still works. An agent told it has a $2 budget and that it must check before spending tends to scope tasks more tightly, launch fewer sub-agents, and stop earlier when a task runs more expensive than anticipated.
 
@@ -80,7 +79,7 @@ That said, it still works. An agent told it has a $2 budget and that it must che
 
 `l6e_run_end` also returns `pending_exact_calls`, `last_reconciled_at`, `mode_coverage`, and `mode_coverage_gaps`.
 
-`l6e_run_status` does not report exactness mid-session — it is intentionally lightweight, returning only `budget_pressure`, `remaining_usd`, and `pct_used`. It accepts `estimated_prompt_tokens` and `estimated_completion_tokens` as a forcing function: the agent must think about the cost of its next stage before checking status.
+`l6e_authorize_call` with `check_only=True` does not report exactness mid-session — it is intentionally lightweight, returning only `budget_pressure`, `remaining_usd`, and `pct_used`. It accepts `estimated_prompt_tokens` and `estimated_completion_tokens` as a forcing function: the agent must think about the cost of its next stage before checking status.
 
 ## Mode coverage
 

@@ -21,8 +21,10 @@ from l6e_mcp import config as _config
 from l6e_mcp import outbox as _outbox
 from l6e_mcp.contracts.exactness import ExactnessState
 from l6e_mcp.core.authorization import authorize_call
+from l6e_mcp.core.calibration_cache import CalibrationCache
 from l6e_mcp.core.exactness import run_exactness_state
 from l6e_mcp.core.remote_authorize import try_remote_authorize
+from l6e_mcp.core.status_telemetry import StatusTelemetryPayload, StatusTelemetryWorker
 from l6e_mcp.session_store import (
     LocalSessionStore,
     ReconcileRequest,
@@ -39,8 +41,8 @@ mcp = FastMCP(
         "l6e enforces session budgets for AI coding assistants. "
         "Every task follows one lifecycle: "
         "l6e_run_start (once, before any work) → "
-        "l6e_authorize_call (blocking gate before sub-agents and stage transitions) / "
-        "l6e_run_status (lightweight spend check within a stage) → "
+        "l6e_authorize_call (blocking gate at stage boundaries; "
+        "pass check_only=True for lightweight mid-stage pressure checks) → "
         "l6e_run_end (once, at task end). "
         "l6e_run_end is mandatory even on failure or cancellation — "
         "it is the only way to flush the run log. "
@@ -82,6 +84,58 @@ def _reset_session_store() -> None:
     global _store  # noqa: PLW0603
     with _store_lock:
         _store = None
+
+
+_calibration_cache: CalibrationCache | None = None
+_calibration_cache_lock = threading.Lock()
+
+
+def _get_calibration_cache() -> CalibrationCache:
+    global _calibration_cache  # noqa: PLW0603
+    if _calibration_cache is not None:
+        return _calibration_cache
+    with _calibration_cache_lock:
+        if _calibration_cache is not None:
+            return _calibration_cache
+        _calibration_cache = CalibrationCache()
+        return _calibration_cache
+
+
+def _reset_calibration_cache() -> None:
+    """Clear the cached singleton. Used by tests for isolation."""
+    global _calibration_cache  # noqa: PLW0603
+    with _calibration_cache_lock:
+        _calibration_cache = None
+
+
+_telemetry_worker: StatusTelemetryWorker | None = None
+_telemetry_worker_lock = threading.Lock()
+
+
+def _get_telemetry_worker() -> StatusTelemetryWorker | None:
+    """Return the telemetry worker if cloud sync is enabled, else None."""
+    global _telemetry_worker  # noqa: PLW0603
+    api_key = _config.get_api_key()
+    if not api_key or not _config.is_cloud_sync_enabled():
+        return None
+    if _telemetry_worker is not None:
+        return _telemetry_worker
+    with _telemetry_worker_lock:
+        if _telemetry_worker is not None:
+            return _telemetry_worker
+        _telemetry_worker = StatusTelemetryWorker(
+            api_key=api_key, endpoint=_config.get_cloud_endpoint(),
+        )
+        return _telemetry_worker
+
+
+def _reset_telemetry_worker() -> None:
+    """Clear the cached singleton. Used by tests for isolation."""
+    global _telemetry_worker  # noqa: PLW0603
+    with _telemetry_worker_lock:
+        if _telemetry_worker is not None:
+            _telemetry_worker.shutdown(timeout=0.5)
+        _telemetry_worker = None
 
 
 def _require_session(
@@ -289,6 +343,14 @@ def _try_server_authorize(
     )
     store.increment_checkpoint_calls(session.session_id)
 
+    _get_calibration_cache().update(
+        session.session_id,
+        factor=server_resp.get("calibration_factor", 1.0),
+        source=server_resp.get("calibration_source", "none"),
+        confidence=server_resp.get("calibration_confidence"),
+        factor_range=server_resp.get("factor_range"),
+    )
+
     result: dict = {
         "action": server_resp["action"],
         "remaining_usd": server_resp["remaining_usd"],
@@ -318,6 +380,11 @@ def l6e_authorize_call(
         int | None,
         "Optional explicit completion token estimate.",
     ] = None,
+    check_only: Annotated[
+        bool,
+        "If True, returns a read-only budget projection without recording a call "
+        "or making a gate decision. Use for lightweight mid-stage pressure checks.",
+    ] = False,
     actor_type: Annotated[
         str,
         "Optional actor type for attribution. Use 'subagent' for child agent work.",
@@ -350,9 +417,60 @@ def l6e_authorize_call(
         "Must be provided alongside actual_prompt_tokens to take effect.",
     ] = None,
 ) -> dict:
-    """Blocking gate: call before launching any sub-agent (actor_type='subagent') and at every stage boundary (planning, search, implement, test, debug). Pass the stage label in tool_name — there is no 'stage' parameter. Returns allow, reroute, or halt — proceed only on allow."""  # noqa: E501 — MCP tool docstring surfaces verbatim to agents; truncating it degrades guidance quality
+    """Budget gate and status check. Call at every stage boundary and before sub-agents. Pass check_only=True for lightweight mid-stage pressure checks (no call record, no gate action). Otherwise returns allow, reroute, or halt — proceed only on allow."""  # noqa: E501 — MCP tool docstring surfaces verbatim to agents; truncating it degrades guidance quality
     store = _get_session_store()
     session = _require_session(session_id, store=store)
+
+    if check_only:
+        store.increment_status_calls(session_id)
+        snapshot = _spend_snapshot(session, store=store)
+
+        prompt_tokens = estimated_prompt_tokens or estimated_tokens or 2000
+        completion_tokens = estimated_completion_tokens or 400
+        estimator = LiteLLMCostEstimator(
+            fallback_cost_per_1k_tokens=session.policy.unknown_model_cost_per_1k_tokens
+        )
+        raw_cost = estimator.estimate(session.model, prompt_tokens, completion_tokens)
+
+        cached = _get_calibration_cache().get(session_id)
+        if cached is not None:
+            projected_cost = raw_cost * Decimal(str(cached.factor))
+            calibration_applied = True
+        else:
+            projected_cost = raw_cost
+            calibration_applied = False
+
+        budget = Decimal(str(session.policy.budget))
+        spent = Decimal(str(snapshot["spent_usd"])) + projected_cost
+        remaining = budget - spent
+        pct_used = (spent / budget * 100) if budget > 0 else Decimal("0")
+
+        budget_pressure = _budget_pressure(float(pct_used))
+        result: dict = {
+            "budget_pressure": budget_pressure,
+            "remaining_usd": float(round(remaining, 6)),
+            "pct_used": float(round(pct_used, 2)),
+        }
+        if calibration_applied:
+            result["calibration_applied"] = True
+
+        worker = _get_telemetry_worker()
+        if worker is not None:
+            worker.enqueue(StatusTelemetryPayload(
+                session_id=session_id,
+                model=session.model,
+                estimated_prompt_tokens=prompt_tokens,
+                estimated_completion_tokens=completion_tokens,
+                raw_projected_cost_usd=float(raw_cost),
+                calibrated_projected_cost_usd=float(projected_cost),
+                calibration_factor=cached.factor if cached else None,
+                calibration_source=cached.source if cached else None,
+                budget_usd=session.policy.budget,
+                spent_usd=snapshot["spent_usd"],
+                budget_pressure=budget_pressure,
+            ))
+
+        return result
 
     use_actual = (
         actual_prompt_tokens is not None and actual_completion_tokens is not None
@@ -479,55 +597,6 @@ def l6e_record_usage(
         "spend_so_far_usd": snapshot["spent_usd"],
         "remaining_usd": snapshot["remaining_usd"],
         "budget_pressure": snapshot["budget_pressure"],
-    }
-
-
-@mcp.tool(timeout=5)
-def l6e_run_status(
-    session_id: Annotated[str, "Session ID from l6e_run_start"],
-    estimated_prompt_tokens: Annotated[
-        int | None,
-        "Estimated prompt tokens for the next stage. Providing this forces a cost-aware "
-        "assessment before you proceed — omitting it reduces budget accuracy.",
-    ] = None,
-    estimated_completion_tokens: Annotated[
-        int | None,
-        "Estimated completion tokens for the next stage. Provide alongside "
-        "estimated_prompt_tokens for best-effort spend projection.",
-    ] = None,
-) -> dict:
-    """Read-only spend snapshot. No call recorded, no gate action. Use within a stage to monitor budget pressure without burning a checkpoint. Pass estimated_prompt_tokens and estimated_completion_tokens for the next stage to force a cost-aware assessment — the projected cost is factored into the returned budget_pressure and remaining_usd."""  # noqa: E501 — MCP tool docstring surfaces verbatim to agents; truncating it degrades guidance quality
-    store = _get_session_store()
-    try:
-        store.increment_status_calls(session_id)
-    except KeyError as exc:
-        raise ToolError(exc.args[0]) from exc
-    session = _require_session(session_id, store=store)
-    snapshot = _spend_snapshot(session, store=store)
-
-    if estimated_prompt_tokens is not None or estimated_completion_tokens is not None:
-        prompt_tokens = estimated_prompt_tokens or 2000
-        completion_tokens = estimated_completion_tokens or 400
-        estimator = LiteLLMCostEstimator(
-            fallback_cost_per_1k_tokens=session.policy.unknown_model_cost_per_1k_tokens
-        )
-        projected_cost = estimator.estimate(
-            session.model, prompt_tokens, completion_tokens,
-        )
-        budget = Decimal(str(session.policy.budget))
-        spent = Decimal(str(snapshot["spent_usd"])) + projected_cost
-        remaining = budget - spent
-        pct_used = (spent / budget * 100) if budget > 0 else Decimal("0")
-        return {
-            "budget_pressure": _budget_pressure(float(pct_used)),
-            "remaining_usd": float(round(remaining, 6)),
-            "pct_used": float(round(pct_used, 2)),
-        }
-
-    return {
-        "budget_pressure": snapshot["budget_pressure"],
-        "remaining_usd": snapshot["remaining_usd"],
-        "pct_used": snapshot["pct_used"],
     }
 
 

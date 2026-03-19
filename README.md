@@ -7,7 +7,7 @@
 
 Session-scoped budget enforcement for AI coding assistants via the [Model Context Protocol](https://modelcontextprotocol.io/).
 
-Wraps the [l6e](https://github.com/l6e-ai/l6e) core enforcement runtime and exposes five MCP tools that let Cursor, Claude Code, Windsurf, and OpenClaw enforce per-session LLM budgets.
+Wraps the [l6e](https://github.com/l6e-ai/l6e) core enforcement runtime and exposes four MCP tools that let Cursor, Claude Code, Windsurf, and OpenClaw enforce per-session LLM budgets.
 
 ## Install
 
@@ -20,16 +20,15 @@ pip install l6e-mcp
 | Tool | Purpose |
 |---|---|
 | `l6e_run_start` | Open a new budget session. Accepts `task_summary`, `accounting_mode`, `unknown_model_pricing_mode`, and per-mode exactness overrides. Returns `session_id`. |
-| `l6e_authorize_call` | Blocking gate before sub-agents (`actor_type='subagent'`) and stage transitions. Returns `allow`, `reroute`, or `halt` with a `call_id`. Pass `actual_prompt_tokens` + `actual_completion_tokens` to reconcile inline instead of a separate `l6e_record_usage` call. |
+| `l6e_authorize_call` | Blocking gate before sub-agents (`actor_type='subagent'`) and stage transitions. Returns `allow`, `reroute`, or `halt` with a `call_id`. Pass `check_only=True` for a lightweight budget pressure check without recording a call. Pass `actual_prompt_tokens` + `actual_completion_tokens` to reconcile inline instead of a separate `l6e_record_usage` call. |
 | `l6e_record_usage` | Attach exact token usage to an existing `call_id` (idempotent). |
-| `l6e_run_status` | Read-only spend snapshot. Pass `estimated_prompt_tokens` + `estimated_completion_tokens` for a cost-projection assessment before the next stage. |
 | `l6e_run_end` | Close the session and flush the run log to `.l6e/runs.jsonl`. Returns exactness state, mode coverage gaps, and pending reconciliation count. |
 
 ## Running locally without a backend proxy
 
 When you run `l6e-mcp` without a remote backend proxy, **all budget accounting is based on token estimates that the agent constructs before each call**. There is currently no way for an MCP server to intercept the actual token counts from your LLM provider in real time — the MCP protocol does not expose that response data.
 
-This means the numbers are approximate. The cost you see in `l6e_run_status` reflects what the agent guessed it was about to spend, not what your provider actually billed.
+This means the numbers are approximate. The cost you see in `l6e_authorize_call` with `check_only=True` reflects what the agent guessed it was about to spend, not what your provider actually billed.
 
 That said, it still works. An agent that is told it has a $2 budget and must check before spending tends to scope tasks more tightly, launch fewer sub-agents, and stop earlier when a task turns out to be more expensive than expected. The behavioral effect — the agent knowing it has a finite budget and that it is spending money — is present even when the accounting is not exact.
 
@@ -79,9 +78,9 @@ This reads your run log (`~/.l6e/runs.jsonl`) and outputs a per-model calibratio
 reconciled at close), `last_reconciled_at`, `mode_coverage`, and
 `mode_coverage_gaps` to show which IDE modes had exact accounting available.
 
-`l6e_run_status` does not report exactness state mid-session — it is
-intentionally lightweight. See [Mode coverage](#mode-coverage) for how to
-configure exactness expectations per mode.
+`l6e_authorize_call` with `check_only=True` does not report exactness state
+mid-session — it is intentionally lightweight. See [Mode coverage](#mode-coverage)
+for how to configure exactness expectations per mode.
 
 ## Mode coverage
 

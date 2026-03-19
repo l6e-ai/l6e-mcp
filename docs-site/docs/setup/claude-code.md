@@ -90,12 +90,11 @@ Run `/mcp` in the interactive REPL, or from the terminal:
 claude mcp list
 ```
 
-The `l6e-budget` server should appear with five tools listed:
+The `l6e-budget` server should appear with four tools listed:
 
 - `l6e_run_start`
 - `l6e_authorize_call`
 - `l6e_record_usage`
-- `l6e_run_status`
 - `l6e_run_end`
 
 If the server does not appear, check that `uvx` is on your PATH (`which uvx`) or that `l6e-mcp` is installed (`pip show l6e-mcp`).

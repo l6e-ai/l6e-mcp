@@ -4,7 +4,12 @@ from __future__ import annotations
 import pytest
 from fastmcp.client import Client
 
-from l6e_mcp.server import _reset_session_store, mcp
+from l6e_mcp.server import (
+    _reset_calibration_cache,
+    _reset_session_store,
+    _reset_telemetry_worker,
+    mcp,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -18,8 +23,12 @@ def reset_sessions(tmp_path, monkeypatch):
     monkeypatch.setenv("L6E_LOG_PATH", str(tmp_path / "runs.jsonl"))
     monkeypatch.setenv("L6E_SESSION_DB_PATH", str(tmp_path / "sessions.db"))
     _reset_session_store()
+    _reset_calibration_cache()
+    _reset_telemetry_worker()
     yield
     _reset_session_store()
+    _reset_calibration_cache()
+    _reset_telemetry_worker()
 
 
 @pytest.fixture
