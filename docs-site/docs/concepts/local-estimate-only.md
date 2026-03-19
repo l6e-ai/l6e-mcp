@@ -49,7 +49,7 @@ Common sources of drift:
 
 ## The accounting path, precisely
 
-The session opens in `estimate_only` accounting mode. This is visible in `l6e_run_status` as `accounting_mode: "estimate_only"`.
+The session opens in `estimate_only` accounting mode.
 
 Each `l6e_authorize_call` call:
 1. Reads persisted spend from the local SQLite store

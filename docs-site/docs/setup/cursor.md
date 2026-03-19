@@ -43,7 +43,7 @@ Add the following to your MCP configuration file.
 }
 ```
 
-`L6E_LOG_PATH` is recommended. Cursor spawns MCP servers as child processes, so without it `runs.jsonl` will be written relative to wherever the Cursor process started — which is not always your project directory, particularly with a global config.
+`L6E_LOG_PATH` should always be an absolute path. Cursor spawns MCP servers as child processes, so without it `runs.jsonl` will be written relative to wherever the Cursor process started — which is not always your project directory, particularly with a global config.
 
 `L6E_API_KEY` and `L6E_CLOUD_SYNC` are optional — omit them to run fully local. When set, session run logs are synced to the l6e cloud after each `l6e_run_end`.
 
