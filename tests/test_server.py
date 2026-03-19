@@ -792,6 +792,39 @@ async def test_run_status_accepts_estimate_params(client):
     assert result.data["budget_pressure"] in ("low", "moderate", "high", "critical")
 
 
+async def test_run_status_projects_estimated_cost_into_snapshot(client):
+    """When token estimates are provided, the projected cost must reduce
+    remaining_usd and increase pct_used compared to a bare status call."""
+    session = await start_session(client, budget_usd=5.0, model="gpt-4o")
+    sid = session["session_id"]
+
+    bare = await client.call_tool(
+        "l6e_run_status", {"session_id": sid}, raise_on_error=False,
+    )
+    assert not bare.is_error
+
+    projected = await client.call_tool(
+        "l6e_run_status",
+        {
+            "session_id": sid,
+            "estimated_prompt_tokens": 5000,
+            "estimated_completion_tokens": 1000,
+        },
+        raise_on_error=False,
+    )
+    assert not projected.is_error
+    assert projected.data["remaining_usd"] < bare.data["remaining_usd"]
+    assert projected.data["pct_used"] > bare.data["pct_used"]
+
+    bare_after = await client.call_tool(
+        "l6e_run_status", {"session_id": sid}, raise_on_error=False,
+    )
+    assert not bare_after.is_error
+    assert bare_after.data["remaining_usd"] == bare.data["remaining_usd"], (
+        "Projection must be transient — no call record should persist"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Slim response shape — l6e_run_start
 # ---------------------------------------------------------------------------

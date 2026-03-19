@@ -496,7 +496,7 @@ def l6e_run_status(
         "estimated_prompt_tokens for best-effort spend projection.",
     ] = None,
 ) -> dict:
-    """Read-only spend snapshot. No call recorded, no gate action. Use within a stage to monitor budget pressure without burning a checkpoint. Pass estimated_prompt_tokens and estimated_completion_tokens for the next stage to force a cost-aware assessment."""  # noqa: E501 — MCP tool docstring surfaces verbatim to agents; truncating it degrades guidance quality
+    """Read-only spend snapshot. No call recorded, no gate action. Use within a stage to monitor budget pressure without burning a checkpoint. Pass estimated_prompt_tokens and estimated_completion_tokens for the next stage to force a cost-aware assessment — the projected cost is factored into the returned budget_pressure and remaining_usd."""  # noqa: E501 — MCP tool docstring surfaces verbatim to agents; truncating it degrades guidance quality
     store = _get_session_store()
     try:
         store.increment_status_calls(session_id)
@@ -504,6 +504,26 @@ def l6e_run_status(
         raise ToolError(exc.args[0]) from exc
     session = _require_session(session_id, store=store)
     snapshot = _spend_snapshot(session, store=store)
+
+    if estimated_prompt_tokens is not None or estimated_completion_tokens is not None:
+        prompt_tokens = estimated_prompt_tokens or 2000
+        completion_tokens = estimated_completion_tokens or 400
+        estimator = LiteLLMCostEstimator(
+            fallback_cost_per_1k_tokens=session.policy.unknown_model_cost_per_1k_tokens
+        )
+        projected_cost = estimator.estimate(
+            session.model, prompt_tokens, completion_tokens,
+        )
+        budget = Decimal(str(session.policy.budget))
+        spent = Decimal(str(snapshot["spent_usd"])) + projected_cost
+        remaining = budget - spent
+        pct_used = (spent / budget * 100) if budget > 0 else Decimal("0")
+        return {
+            "budget_pressure": _budget_pressure(float(pct_used)),
+            "remaining_usd": float(round(remaining, 6)),
+            "pct_used": float(round(pct_used, 2)),
+        }
+
     return {
         "budget_pressure": snapshot["budget_pressure"],
         "remaining_usd": snapshot["remaining_usd"],
