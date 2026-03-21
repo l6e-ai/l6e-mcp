@@ -48,7 +48,7 @@ Add the [l6e budget enforcement rule](https://docs.l6e.ai/setup/cursor) to `.cur
 
 | Tool | Purpose |
 |---|---|
-| `l6e_run_start` | Open a new budget session. Accepts `task_summary`, `accounting_mode`, `unknown_model_pricing_mode`, and per-mode exactness overrides. Returns `session_id`. |
+| `l6e_run_start` | Open a new budget session. Accepts `task_summary`, `accounting_mode`, `unknown_model_pricing_mode`, `parent_session_id` (for multi-session orchestration), and per-mode exactness overrides. Returns `session_id`. |
 | `l6e_authorize_call` | Blocking gate before sub-agents (`actor_type='subagent'`) and stage transitions. Returns `allow`, `reroute`, or `halt` with a `call_id`. Pass `check_only=True` for a lightweight budget pressure check without recording a call. Pass `actual_prompt_tokens` + `actual_completion_tokens` to reconcile inline instead of a separate `l6e_record_usage` call. |
 | `l6e_record_usage` | Attach exact token usage to an existing `call_id` (idempotent). |
 | `l6e_run_end` | Close the session and flush the run log to `.l6e/runs.jsonl`. Returns exactness state, mode coverage gaps, and pending reconciliation count. |
@@ -59,7 +59,7 @@ When you run `l6e-mcp` without a remote backend proxy, **all budget accounting i
 
 This means the numbers are approximate. The cost you see in `l6e_authorize_call` with `check_only=True` reflects what the agent guessed it was about to spend, not what your provider actually billed.
 
-That said, it still works. An agent that is told it has a $2 budget and must check before spending tends to scope tasks more tightly, launch fewer sub-agents, and stop earlier when a task turns out to be more expensive than expected. The behavioral effect — the agent knowing it has a finite budget and that it is spending money — is present even when the accounting is not exact.
+That said, it still works. An agent that is told it has a $2 budget and must check before spending tends to scope tasks more tightly, launch fewer sub-agents, and stop earlier when a task turns out to be more expensive than expected. For multi-phase work, a manager agent can spawn sub-agents with independent budgets by passing `parent_session_id` to `l6e_run_start` — the dashboard groups these child sessions under their parent. The behavioral effect — the agent knowing it has a finite budget and that it is spending money — is present even when the accounting is not exact.
 
 **A practical starting point:** Set small budgets, $1–3, and observe how the estimates track against your provider's actual costs for a few sessions. You'll quickly get a sense of how accurate the estimates are for the models and task types you use.
 

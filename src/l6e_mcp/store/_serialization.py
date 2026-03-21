@@ -121,6 +121,9 @@ def _session_from_row(row: sqlite3.Row) -> SessionState:
         end_summary=(
             str(row["end_summary"]) if "end_summary" in row.keys() and row["end_summary"] is not None else None  # noqa: SIM118, E501
         ),
+        parent_session_id=(
+            str(row["parent_session_id"]) if "parent_session_id" in row.keys() and row["parent_session_id"] is not None else None  # noqa: SIM118, E501
+        ),
     )
 
 

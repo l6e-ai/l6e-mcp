@@ -234,6 +234,11 @@ async def l6e_run_start(
         str | None,
         "Optional 5-10 word task label, like a commit subject. Null is fine.",
     ] = None,
+    parent_session_id: Annotated[
+        str | None,
+        "Optional session_id of a parent/manager session. Use for multi-session orchestration "
+        "where a coordinator spawns child sessions with independent budgets.",
+    ] = None,
     accounting_mode: Annotated[
         str | None,
         "Optional accounting mode: estimate_only, exact_optional, or exact_required.",
@@ -289,6 +294,7 @@ async def l6e_run_start(
         plan_mode_exact_capable=plan_mode_exact_capable,
         agent_mode_exact_capable=agent_mode_exact_capable,
         start_summary=start_summary,
+        parent_session_id=parent_session_id,
     )
 
     api_key = _config.get_api_key()

@@ -178,7 +178,9 @@ For your parent session as the main agent, use a budget of $3 to
 manage the subagents.
 ```
 
-This works because each sub-agent gets its own `l6e_run_start` call with an independent budget ceiling. The manager agent's budget covers only coordination overhead (reading plans, writing todos, checking results). Total spend is the sum of all sessions, but each phase is independently cost-bounded.
+This works because each sub-agent gets its own `l6e_run_start` call with an independent budget ceiling. Each child session passes `parent_session_id` set to the manager's `session_id`, which links them in the dashboard. The manager agent's budget covers only coordination overhead (reading plans, writing todos, checking results). Total spend is the sum of all sessions, but each phase is independently cost-bounded.
+
+The dashboard automatically groups child sessions under their parent, showing aggregate cost and a combined session count. Expand the group to see individual phase sessions and their call-level detail.
 
 **When to use this:** Large multi-phase implementations where phases don't share context. Planning and decomposition should happen first (in a separate session or earlier in the conversation) so the manager has a clear phase list to work from.
 
