@@ -139,6 +139,7 @@ def init_schema(conn: sqlite3.Connection) -> None:
     _ensure_column(conn, "sessions", "status_calls", "INTEGER NOT NULL DEFAULT 0")
     _ensure_column(conn, "sessions", "start_summary", "TEXT")
     _ensure_column(conn, "sessions", "end_summary", "TEXT")
+    _ensure_column(conn, "sessions", "parent_session_id", "TEXT")
     _ensure_column(conn, "calls", "raw_estimated_cost_usd", "TEXT")
     # Drop columns removed in the proxy_mode/advanced_fallback cleanup so that
     # existing databases (created before the schema change) can still INSERT rows.

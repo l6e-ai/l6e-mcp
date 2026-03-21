@@ -123,6 +123,8 @@ def build_session_report(
             report["start_summary"] = session.start_summary
         if session.end_summary is not None:
             report["end_summary"] = session.end_summary
+    if session.parent_session_id is not None:
+        report["parent_session_id"] = session.parent_session_id
     call_dicts = []
     for c in calls:
         entry: dict = {

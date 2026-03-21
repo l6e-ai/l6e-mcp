@@ -59,6 +59,7 @@ class LocalSessionStore:
         plan_mode_exact_capable: bool | None = None,
         agent_mode_exact_capable: bool | None = None,
         start_summary: str | None = None,
+        parent_session_id: str | None = None,
     ) -> SessionState:
         return self._sessions.create(
             session_id=session_id,
@@ -72,6 +73,7 @@ class LocalSessionStore:
             plan_mode_exact_capable=plan_mode_exact_capable,
             agent_mode_exact_capable=agent_mode_exact_capable,
             start_summary=start_summary,
+            parent_session_id=parent_session_id,
         )
 
     def get_session(self, session_id: str) -> SessionState | None:
