@@ -56,8 +56,8 @@ to check budget. Budget $5.
 ```
 
 ```
-Review the implementation for correctness. Call l6e_run_status after
-reading each file. Budget $2.
+Review the implementation for correctness. Call l6e_authorize_call
+with check_only=True after reading each file. Budget $2.
 ```
 
 ### `skip l6e`
@@ -131,6 +131,7 @@ Call l6e_authorize_call at each phase transition. Budget $8.
 | Small implementation | $2 – $3 | A few files, straightforward changes |
 | Large implementation | $3 – $8 | Multi-file, sub-agents, tests |
 | Full lifecycle | $5 – $10 | Plan through review in one conversation |
+| Multi-session orchestration | $2 – $3 manager + $3 – $5 per phase | Parallel phases with independent budgets |
 | Quick one-off edit | Skip l6e | Not worth the overhead |
 
 Start small and increase if the agent halts mid-task — it preserves full context and tells you what remains, so you can approve more budget without starting over.
@@ -140,8 +141,8 @@ Start small and increase if the agent halts mid-task — it preserves full conte
 ### Re-engaging enforcement mid-conversation
 
 ```
-You stopped checking the budget. Call l6e_run_status now to check
-spend, then continue. Budget $3.
+You stopped checking the budget. Call l6e_authorize_call with
+check_only=True now to check spend, then continue. Budget $3.
 ```
 
 ### Starting a fresh session mid-conversation
@@ -159,6 +160,29 @@ Sub-agents are the most expensive single operations. To keep costs down:
 Implement the auth middleware changes. Do not use sub-agents — do all
 work directly. Budget $3.
 ```
+
+### Multi-session orchestration
+
+For large tasks with parallelizable phases, you can run a **manager agent** that spawns sub-agents with independent l6e budgets. Each sub-agent starts its own session, so a runaway phase can't eat another phase's budget.
+
+```
+I want you to make a todo list for phase 3 and execute it in a sub
+agent that will use l6e to build phase 3 with a budget of $3 —
+ensuring that the sub agent runs authorize before major checkpoints.
+
+Then while that sub-agent runs, make a todo list for phase 4 and spin
+up another sub agent that will use l6e with a budget of $4 — ensuring
+that the sub agent runs authorize before major checkpoints.
+
+For your parent session as the main agent, use a budget of $3 to
+manage the subagents.
+```
+
+This works because each sub-agent gets its own `l6e_run_start` call with an independent budget ceiling. The manager agent's budget covers only coordination overhead (reading plans, writing todos, checking results). Total spend is the sum of all sessions, but each phase is independently cost-bounded.
+
+**When to use this:** Large multi-phase implementations where phases don't share context. Planning and decomposition should happen first (in a separate session or earlier in the conversation) so the manager has a clear phase list to work from.
+
+**Budget sizing:** Manager budget is typically small ($2-3) since it's mostly orchestration. Phase budgets depend on phase complexity — start with $3-5 per phase and increase if a sub-agent halts mid-work.
 
 ## Quick reference
 

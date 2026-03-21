@@ -1,4 +1,4 @@
-"""Thin HTTP client for server-side authorize with calibration factors.
+"""Async HTTP client for server-side authorize with calibration factors.
 
 When cloud sync is enabled and an API key is set, the MCP client calls
 the hosted-edge ``POST /v1/authorize`` endpoint to get calibrated budget
@@ -7,19 +7,57 @@ from billing reconciliation.
 
 This module is best-effort: it returns ``None`` on any failure (network,
 timeout, non-200, JSON parse) so the caller can fall back to local auth.
+
+The shared ``httpx.AsyncClient`` reuses TCP connections across calls,
+eliminating per-request DNS and TLS overhead.
 """
 from __future__ import annotations
 
+import atexit
 import logging
 
 import httpx
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_TIMEOUT = 2.0
+_DEFAULT_TIMEOUT = 1.0
+
+_client: httpx.AsyncClient | None = None
 
 
-def try_remote_authorize(
+def _get_async_client(timeout: float = _DEFAULT_TIMEOUT) -> httpx.AsyncClient:
+    global _client  # noqa: PLW0603
+    if _client is None:
+        _client = httpx.AsyncClient(timeout=timeout)
+    return _client
+
+
+def _shutdown_client() -> None:
+    global _client  # noqa: PLW0603
+    if _client is not None:
+        try:
+            # Best-effort sync close; the event loop may already be torn down.
+            import asyncio
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(_client.aclose())
+            except RuntimeError:
+                asyncio.run(_client.aclose())
+        except Exception:
+            pass
+        _client = None
+
+
+atexit.register(_shutdown_client)
+
+
+def _reset_client() -> None:
+    """Clear the cached client. Used by tests for isolation."""
+    global _client  # noqa: PLW0603
+    _client = None
+
+
+async def try_remote_authorize(
     *,
     api_key: str,
     endpoint: str,
@@ -33,8 +71,9 @@ def try_remote_authorize(
 ) -> dict | None:
     """POST to server-side authorize. Returns response dict or None on failure."""
     url = f"{endpoint}/v1/authorize"
+    client = _get_async_client(timeout)
     try:
-        resp = httpx.post(
+        resp = await client.post(
             url,
             json={
                 "session_id": session_id,
@@ -45,7 +84,6 @@ def try_remote_authorize(
                 "spent_usd": spent_usd,
             },
             headers={"Authorization": f"Bearer {api_key}"},
-            timeout=timeout,
         )
         if resp.status_code != 200:
             logger.debug(

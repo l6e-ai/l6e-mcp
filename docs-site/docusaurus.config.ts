@@ -6,7 +6,7 @@ const DISCORD_INVITE_URL = 'https://discord.gg/AX9t8jNR2J';
 
 const config: Config = {
   title: 'l6e-mcp',
-  tagline: 'Session-scoped budget enforcement for AI coding assistants.',
+  tagline: 'l6e gives your AI coding agent a budget',
   favicon: 'img/favicon.ico',
 
   future: {
@@ -109,6 +109,8 @@ const config: Config = {
             {label: 'Setup: Cursor', to: '/setup/cursor'},
             {label: 'Setup: Claude Code', to: '/setup/claude-code'},
             {label: 'Local Enforcement', to: '/concepts/local-estimate-only'},
+            {label: 'Calibration', to: '/concepts/calibration'},
+            {label: 'Cloud Sync', to: '/concepts/cloud-sync'},
           ],
         },
         {

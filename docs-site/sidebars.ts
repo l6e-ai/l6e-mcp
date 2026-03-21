@@ -19,6 +19,8 @@ const sidebars: SidebarsConfig = {
       label: 'Concepts',
       items: [
         'concepts/local-estimate-only',
+        'concepts/calibration',
+        'concepts/cloud-sync',
       ],
     },
   ],

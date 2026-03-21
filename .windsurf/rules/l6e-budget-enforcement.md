@@ -1,7 +1,7 @@
 # l6e budget enforcement
 
 Use l6e only via MCP tools. Never import `l6e` or `l6e_mcp` in Python.
-Pass `model` as the exact active billing model ID without the provider prefix (e.g. `"claude-sonnet-4-20250514"`, not `"anthropic/claude-sonnet-4-20250514"`), or `"unknown"` if unsure. Set `client` to `"openclaw"`. USE IN PLAN OR AGENT MODE.
+Pass `model` as the exact active billing model ID (or `"unknown"`), and set `client` to `"windsurf"`. USE IN PLAN OR AGENT MODE.
 
 **Always call MCP tools with only the parameters defined in the tool schema. Never invent parameters — `additionalProperties: false` means any extra field causes a hard validation error. When in doubt, read the schema descriptor before calling.**
 

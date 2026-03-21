@@ -5,15 +5,44 @@
 [![mypy](https://github.com/l6e-ai/l6e-mcp/actions/workflows/mypy.yml/badge.svg?branch=main)](https://github.com/l6e-ai/l6e-mcp/actions/workflows/mypy.yml)
 [![ruff](https://github.com/l6e-ai/l6e-mcp/actions/workflows/ruff.yml/badge.svg?branch=main)](https://github.com/l6e-ai/l6e-mcp/actions/workflows/ruff.yml)
 
+l6e gives your AI coding agent a budget. Set a dollar limit per task, and your agent will checkpoint before expensive operations, get halt signals when it's spending too much, and give you a structured cost-aware workflow. No proxy, no SDK — just an MCP server that works with Cursor, Claude Code, and Windsurf. Import your billing data and l6e learns your cost patterns — the more you use it, the tighter the calibration gets.
+
 Session-scoped budget enforcement for AI coding assistants via the [Model Context Protocol](https://modelcontextprotocol.io/).
 
 Wraps the [l6e](https://github.com/l6e-ai/l6e) core enforcement runtime and exposes four MCP tools that let Cursor, Claude Code, Windsurf, and OpenClaw enforce per-session LLM budgets.
 
-## Install
+## Quick start
+
+**1. Install**
 
 ```bash
 pip install l6e-mcp
 ```
+
+Or run with zero install via [uvx](https://docs.astral.sh/uv/):
+
+```bash
+uvx l6e-mcp
+```
+
+**2. Add to your MCP config**
+
+In Cursor, add to `.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "l6e": {
+      "command": "uvx",
+      "args": ["l6e-mcp"]
+    }
+  }
+}
+```
+
+**3. Add the enforcement rule**
+
+Add the [l6e budget enforcement rule](https://docs.l6e.ai/setup/cursor) to `.cursor/rules/` so your agent knows how to use the budget tools. See the [example rule](https://github.com/l6e-ai/l6e-mcp/blob/main/.cursor/rules/l6e-budget-enforcement.mdc) in this repo.
 
 ## Tools
 
@@ -103,6 +132,12 @@ state is `exactness_degraded`.
 - **Local persistence only.** Sessions persist in a local SQLite database; there is no remote sync or team-level control plane in the OSS version.
 - **Estimate-first by default.** Exact real-time accounting requires `l6e_record_usage` calls from your agent with the actual token counts after each LLM call completes.
 - **Savings shows $0 when model pricing is unknown.** If the cost estimator returns `0.0` for either the requested or rerouted model, `savings_usd` in the run summary will be `0.0` regardless of any actual price difference. This happens when a model ID is not recognized by the LiteLLM pricing table. Check `savings_confidence` in `l6e_run_end` to gauge reliability.
+
+## Links
+
+- [docs.l6e.ai](https://docs.l6e.ai) — setup guides, tool reference, and calibration walkthrough
+- [app.l6e.ai](https://app.l6e.ai) — cloud sync, run history, and billing import for calibration
+- [l6e core library](https://github.com/l6e-ai/l6e) — for embedding budget enforcement directly in Python agent pipelines
 
 ## License
 
