@@ -16,13 +16,13 @@ This document describes how `l6e-mcp` works when running entirely locally — no
 - A run log written to `.l6e/runs.jsonl` at session end
 - `allow`, `reroute`, and `halt` decisions returned to the agent before each call (`reroute` tells the agent to stop and ask you to switch to a cheaper model)
 
-## The core limitation: estimates, not actuals
+## Directionally accurate out of the box
 
 The MCP protocol has no mechanism for a server to intercept the response from your LLM provider. When your agent makes an LLM call, `l6e-mcp` never sees the provider's response envelope and cannot read the actual `prompt_tokens` and `completion_tokens` from it.
 
 This means every call is accounted for using the token estimate the agent provides to `l6e_authorize_call` before the call goes out. The accumulated spend shown in `l6e_authorize_call` with `check_only=True` reflects those estimates, not your provider's billing records.
 
-The estimates are reasonable for most models with known pricing (Claude, GPT-4, Gemini), but they will drift from actuals depending on how accurately the agent guesses token counts for each operation.
+The estimates are directionally accurate for most models with known pricing (Claude, GPT-4, Gemini), but they will drift from actuals depending on how accurately the agent guesses token counts for each operation. Without [calibration](calibration), the estimate-to-billing ratio can be 2-10x off — but the behavioral enforcement is real from session one.
 
 ## Why it still changes agent behavior
 
@@ -33,7 +33,7 @@ Even imperfect accounting changes how an agent operates. An agent that must call
 - It stops earlier when a task is running more expensive than anticipated
 - It surfaces a structured message on `halt` rather than silently continuing past budget
 
-The gate is a forcing function for proportionality. The agent knowing it has a $2 budget — even if the accounting is off by 20% — is meaningfully different from the agent having no budget concept at all.
+The gate is a forcing function for proportionality. The agent knowing it has a $2 budget — even if the estimate-to-billing ratio is 2-5x off — is meaningfully different from the agent having no budget concept at all.
 
 ## Practical guidance for starting out
 
@@ -81,7 +81,7 @@ The pre-call gate decision is still based on estimates — the MCP protocol cann
 |---|---|
 | Budget gate before every call | Real token counts from provider |
 | `allow` / `reroute` (advisory) / `halt` decisions | Automatic post-call reconciliation |
-| Local run log for every session | Cross-session calibration without Pro |
+| Local run log for every session | Cross-session [calibration](calibration) (requires billing import) |
 | Session spend visible at any point | Guarantees on estimate accuracy |
 
-Running locally without a proxy gives you real behavioral enforcement at no infrastructure cost. The estimates are imperfect, but they are good enough to change how agents operate — which is the point. Start small, observe the drift, and decide from there whether exact accounting is worth the additional setup.
+Running locally without a proxy gives you real behavioral enforcement at no infrastructure cost. Out of the box, budgets are directionally accurate — good enough to change how agents operate, which is the point. [Calibration](calibration) makes them billing-accurate by learning your personal cost patterns from imported billing data.

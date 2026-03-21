@@ -223,13 +223,17 @@ def _spend_snapshot(
 
 
 @mcp.tool(timeout=10)
-def l6e_run_start(
+async def l6e_run_start(
     budget_usd: Annotated[float, "Hard budget ceiling in USD for this session"],
     model: Annotated[str, "Billing model ID for this session"],
     client: Annotated[
         str,
         "MCP client name for session_id labelling — e.g. cursor, claude-code, windsurf",
     ] = "unknown",
+    task_summary: Annotated[
+        str | None,
+        "Optional 5-10 word task label, like a commit subject. Null is fine.",
+    ] = None,
     accounting_mode: Annotated[
         str | None,
         "Optional accounting mode: estimate_only, exact_optional, or exact_required.",
@@ -254,10 +258,6 @@ def l6e_run_start(
         str,
         "Unknown pricing policy mode: warn_only, reroute_required, or halt_on_unknown_pricing.",
     ] = "warn_only",
-    task_summary: Annotated[
-        str | None,
-        "Optional 5-10 word task label, like a commit subject. Null is fine.",
-    ] = None,
 ) -> dict:
     """Start a new budget-enforced session. Call once at the start of every task before any other work. Returns session_id in the response — store it and pass it to all subsequent l6e calls. Do NOT pass session_id or task_description — use task_summary for a brief task label."""  # noqa: E501 — MCP tool docstring surfaces verbatim to agents; truncating it degrades guidance quality
     model = model.strip() or "unknown"
@@ -313,19 +313,7 @@ def _background_sync(
             api_key, endpoint, store=store, deadline=deadline,
         )
 
-
-def _try_send_or_enqueue(
-    payload: dict, api_key: str, endpoint: str,
-) -> None:
-    """Best-effort cloud sync: POST or fall back to outbox. Never raises."""
-    try:
-        if not _outbox.try_send(payload, api_key, endpoint):
-            _outbox.enqueue(payload)
-    except Exception:
-        _logger.debug("cloud_sync_background_failed", exc_info=True)
-
-
-def _try_server_authorize(
+async def _try_server_authorize(
     *,
     api_key: str,
     session: SessionState,
@@ -354,7 +342,7 @@ def _try_server_authorize(
 
     snapshot = _spend_snapshot(session, store=store)
 
-    server_resp = try_remote_authorize(
+    server_resp = await try_remote_authorize(
         api_key=api_key,
         endpoint=_config.get_cloud_endpoint(),
         session_id=session.session_id,
@@ -411,7 +399,7 @@ def _try_server_authorize(
 
 
 @mcp.tool(timeout=10)
-def l6e_authorize_call(
+async def l6e_authorize_call(
     session_id: Annotated[str, "Session ID from l6e_run_start"],
     tool_name: Annotated[str, "Name of the tool or stage about to run — pass the stage label here (e.g. 'planning', 'implement'). This is NOT a 'stage' parameter; the field is called tool_name."],  # noqa: E501 — Annotated string is the MCP parameter description shown verbatim to agents; must be unambiguous
     estimated_tokens: Annotated[int, "Estimated prompt token count for this call"] = 2000,
@@ -520,7 +508,7 @@ def l6e_authorize_call(
     )
     api_key = _config.get_api_key()
     if api_key and _config.is_cloud_sync_enabled() and not use_actual:
-        server_result = _try_server_authorize(
+        server_result = await _try_server_authorize(
             api_key=api_key,
             session=session,
             store=store,
@@ -571,7 +559,7 @@ def l6e_authorize_call(
 
 
 @mcp.tool(timeout=10)
-def l6e_record_usage(
+async def l6e_record_usage(
     call_id: Annotated[str, "Call ID from a previous l6e_authorize_call result"],
     actual_prompt_tokens: Annotated[int, "Actual prompt tokens for the completed call"],
     actual_completion_tokens: Annotated[int, "Actual completion tokens for the completed call"],
@@ -644,7 +632,7 @@ def l6e_record_usage(
 
 
 @mcp.tool(timeout=10)
-def l6e_run_end(
+async def l6e_run_end(
     session_id: Annotated[str, "Session ID from l6e_run_start"],
     task_summary: Annotated[
         str | None,

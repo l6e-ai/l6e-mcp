@@ -8,9 +8,11 @@ slug: /
 
 # l6e-mcp
 
-**Session-scoped budget enforcement for AI coding assistants via the [Model Context Protocol](https://modelcontextprotocol.io/).**
+**l6e gives your AI coding agent a budget.**
 
-Wraps the [l6e](https://github.com/l6e-ai/l6e) core enforcement runtime and exposes four MCP tools that let Cursor, Claude Code, Windsurf, and OpenClaw enforce per-session LLM budgets.
+Set a dollar limit per task, and your agent will checkpoint before expensive operations, get halt signals when it's spending too much, and give you a structured cost-aware workflow. No proxy, no SDK — just an MCP server that works with Cursor, Claude Code, Windsurf, and OpenClaw.
+
+Import your billing data and l6e learns your cost patterns — the more you use it, the tighter the calibration gets.
 
 :::tip Prompt Guide
 Read the **[Prompt Guide](prompt-guide)** for practical patterns that make budget enforcement work well — including how to prompt through a full plan → implement → review lifecycle.
@@ -47,11 +49,11 @@ Then follow the setup guide for your editor:
 
 ## Running locally without a backend proxy
 
-When you run `l6e-mcp` without a remote backend proxy, **all budget accounting is based on token estimates that the agent constructs before each call**. The MCP protocol does not expose provider response data in real time, so actual token counts are never visible to the server.
+Out of the box, budgets are **directionally accurate**. The MCP protocol does not expose provider response data, so `l6e-mcp` accounts for spend using the token estimates the agent provides before each call. The dollar amounts reflect what the agent *estimated* it was about to spend, not what your provider billed.
 
-This means numbers are approximate. The cost shown in `l6e_authorize_call` with `check_only=True` reflects what the agent estimated it was about to spend, not what your provider billed.
+That's enough to change how the agent works. An agent with a $2 budget scopes tasks more tightly, launches fewer sub-agents, and stops earlier when a task balloons — even if the estimate-to-billing ratio is off. The behavioral enforcement is the point; accurate accounting makes it quantitatively tighter.
 
-That said, it still works. An agent told it has a $2 budget and that it must check before spending tends to scope tasks more tightly, launch fewer sub-agents, and stop earlier when a task runs more expensive than anticipated.
+**Calibration makes it billing-accurate.** Import your billing data and l6e computes a personal calibration factor that corrects for the gap between estimates and reality. See [Calibration](concepts/calibration) for details.
 
 **A practical starting point:** Set small budgets ($1–3) and observe how estimates track against your provider's actual costs. See [Local Enforcement](concepts/local-estimate-only) for a full explanation.
 

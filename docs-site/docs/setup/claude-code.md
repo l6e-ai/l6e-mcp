@@ -7,7 +7,7 @@ sidebar_position: 2
 
 Connect the `l6e-budget` MCP server to Claude Code for session-scoped budget enforcement.
 
-This setup uses calibrated enforcement mode. The agent gates calls using pre-call token estimates; call `l6e_record_usage` manually if you want to feed actual token counts back into the ledger for exact accounting.
+The agent gates calls using pre-call token estimates. Out of the box, budgets are directionally accurate — [calibration](../concepts/calibration) makes them billing-accurate. Call `l6e_record_usage` if you want to feed actual token counts back into the ledger for exact accounting.
 
 ## Install
 

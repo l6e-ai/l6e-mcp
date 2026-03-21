@@ -1,18 +1,19 @@
 """Tests for server-side authorize wiring (remote_authorize + server.py integration).
 
 Covers:
-- try_remote_authorize HTTP client (mock httpx)
+- try_remote_authorize async HTTP client (mock httpx.AsyncClient)
 - Server-first branch in l6e_authorize_call
 - Fallback to local auth when server is unreachable
 - Calibrated spend accumulation across calls
 """
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
+import pytest
 
-from l6e_mcp.core.remote_authorize import try_remote_authorize
+from l6e_mcp.core.remote_authorize import _reset_client, try_remote_authorize
 
 # ---------------------------------------------------------------------------
 # try_remote_authorize unit tests
@@ -50,61 +51,80 @@ _CALL_KWARGS = dict(
 )
 
 
+@pytest.fixture(autouse=True)
+def _fresh_client():
+    """Ensure each test gets a fresh async client."""
+    _reset_client()
+    yield
+    _reset_client()
+
+
+def _mock_async_client(*, post_return=None, post_side_effect=None):
+    """Return a patched _get_async_client whose .post is an AsyncMock."""
+    mock_client = MagicMock()
+    mock_client.post = AsyncMock(
+        return_value=post_return, side_effect=post_side_effect,
+    )
+    return patch(
+        "l6e_mcp.core.remote_authorize._get_async_client",
+        return_value=mock_client,
+    )
+
+
 class TestTryRemoteAuthorize:
-    def test_returns_response_on_allow(self):
+    async def test_returns_response_on_allow(self):
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = _SERVER_ALLOW
 
-        with patch("l6e_mcp.core.remote_authorize.httpx.post", return_value=mock_resp):
-            result = try_remote_authorize(**_CALL_KWARGS)
+        with _mock_async_client(post_return=mock_resp):
+            result = await try_remote_authorize(**_CALL_KWARGS)
         assert result is not None
         assert result["action"] == "allow"
         assert result["calibration_factor"] == 68.0
 
-    def test_returns_response_on_halt(self):
+    async def test_returns_response_on_halt(self):
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = _SERVER_HALT
 
-        with patch("l6e_mcp.core.remote_authorize.httpx.post", return_value=mock_resp):
-            result = try_remote_authorize(**_CALL_KWARGS)
+        with _mock_async_client(post_return=mock_resp):
+            result = await try_remote_authorize(**_CALL_KWARGS)
         assert result is not None
         assert result["action"] == "halt"
 
-    def test_returns_none_on_non_200(self):
+    async def test_returns_none_on_non_200(self):
         mock_resp = MagicMock()
         mock_resp.status_code = 500
         mock_resp.text = "Internal Server Error"
 
-        with patch("l6e_mcp.core.remote_authorize.httpx.post", return_value=mock_resp):
-            result = try_remote_authorize(**_CALL_KWARGS)
+        with _mock_async_client(post_return=mock_resp):
+            result = await try_remote_authorize(**_CALL_KWARGS)
         assert result is None
 
-    def test_returns_none_on_timeout(self):
-        with patch(
-            "l6e_mcp.core.remote_authorize.httpx.post",
-            side_effect=httpx.TimeoutException("timed out"),
+    async def test_returns_none_on_timeout(self):
+        with _mock_async_client(
+            post_side_effect=httpx.TimeoutException("timed out"),
         ):
-            result = try_remote_authorize(**_CALL_KWARGS)
+            result = await try_remote_authorize(**_CALL_KWARGS)
         assert result is None
 
-    def test_returns_none_on_network_error(self):
-        with patch(
-            "l6e_mcp.core.remote_authorize.httpx.post",
-            side_effect=httpx.ConnectError("connection refused"),
+    async def test_returns_none_on_network_error(self):
+        with _mock_async_client(
+            post_side_effect=httpx.ConnectError("connection refused"),
         ):
-            result = try_remote_authorize(**_CALL_KWARGS)
+            result = await try_remote_authorize(**_CALL_KWARGS)
         assert result is None
 
-    def test_sends_correct_payload(self):
+    async def test_sends_correct_payload(self):
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = _SERVER_ALLOW
 
-        with patch("l6e_mcp.core.remote_authorize.httpx.post", return_value=mock_resp) as mock_post:
-            try_remote_authorize(**_CALL_KWARGS)
+        with _mock_async_client(post_return=mock_resp) as mock_get_client:
+            await try_remote_authorize(**_CALL_KWARGS)
 
+        mock_post = mock_get_client.return_value.post
         mock_post.assert_called_once()
         call_args = mock_post.call_args
         assert call_args.args[0] == "https://api.l6e.ai/v1/authorize"

@@ -7,7 +7,7 @@ sidebar_position: 3
 
 Connect the `l6e-budget` MCP server to OpenClaw for session-scoped budget enforcement.
 
-This setup uses the estimate-first path. The agent gates calls using pre-call token estimates; call `l6e_record_usage` manually if you want to feed actual token counts back into the ledger for exact accounting.
+The agent gates calls using pre-call token estimates. Out of the box, budgets are directionally accurate — [calibration](../concepts/calibration) makes them billing-accurate. Call `l6e_record_usage` if you want to feed actual token counts back into the ledger for exact accounting.
 
 ## Install
 
@@ -30,7 +30,9 @@ Edit `~/.openclaw/openclaw.json` and add the `mcpServers` block. If the file alr
       "command": "uvx",
       "args": ["l6e-mcp"],
       "env": {
-        "L6E_LOG_PATH": "${HOME}/.l6e/runs.jsonl"
+        "L6E_LOG_PATH": "${HOME}/.l6e/runs.jsonl",
+        "L6E_API_KEY": "sk-l6e-...",
+        "L6E_CLOUD_SYNC": "1"
       }
     }
   }
@@ -38,6 +40,8 @@ Edit `~/.openclaw/openclaw.json` and add the `mcpServers` block. If the file alr
 ```
 
 **`L6E_LOG_PATH` is required.** OpenClaw's gateway spawns MCP servers as child processes from `~/.openclaw/`, not your project directory. Without this env var, `runs.jsonl` will be written to an unpredictable location.
+
+`L6E_API_KEY` and `L6E_CLOUD_SYNC` are optional — omit them to run fully local. When set, session run logs are synced to the l6e cloud after each `l6e_run_end`.
 
 If `uvx` is not on the PATH that OpenClaw sees, use the full path:
 
@@ -62,7 +66,9 @@ OpenClaw also reads `openclaw.config.json` from the project root, merging it wit
       "command": "uvx",
       "args": ["l6e-mcp"],
       "env": {
-        "L6E_LOG_PATH": "${HOME}/.l6e/runs.jsonl"
+        "L6E_LOG_PATH": "${HOME}/.l6e/runs.jsonl",
+        "L6E_API_KEY": "sk-l6e-...",
+        "L6E_CLOUD_SYNC": "1"
       }
     }
   }
@@ -93,12 +99,11 @@ openclaw mcp list
 openclaw doctor
 ```
 
-`l6e-budget` should appear with status `running` and five tools listed:
+`l6e-budget` should appear with status `running` and four tools listed:
 
 - `l6e_run_start`
 - `l6e_authorize_call`
 - `l6e_record_usage`
-- `l6e_run_status`
 - `l6e_run_end`
 
 `openclaw doctor` validates the full config and reports any parse errors. If `l6e-budget` does not appear, check that `uvx` is on your PATH (`which uvx`) or that `l6e-mcp` is installed (`pip show l6e-mcp`).

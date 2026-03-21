@@ -7,7 +7,7 @@ sidebar_position: 4
 
 Connect the `l6e-budget` MCP server to Windsurf (Cascade) for session-scoped budget enforcement.
 
-This setup uses the estimate-first path. The agent gates calls using pre-call token estimates; call `l6e_record_usage` manually if you want to feed actual token counts back into the ledger for exact accounting.
+The agent gates calls using pre-call token estimates. Out of the box, budgets are directionally accurate — [calibration](../concepts/calibration) makes them billing-accurate. Call `l6e_record_usage` if you want to feed actual token counts back into the ledger for exact accounting.
 
 ## Install
 
@@ -32,7 +32,9 @@ You can also open it through the UI: **Command Palette** (`Cmd+Shift+P`) → `Wi
       "command": "uvx",
       "args": ["l6e-mcp"],
       "env": {
-        "L6E_LOG_PATH": "${HOME}/.l6e/runs.jsonl"
+        "L6E_LOG_PATH": "${HOME}/.l6e/runs.jsonl",
+        "L6E_API_KEY": "sk-l6e-...",
+        "L6E_CLOUD_SYNC": "1"
       }
     }
   }
@@ -40,6 +42,8 @@ You can also open it through the UI: **Command Palette** (`Cmd+Shift+P`) → `Wi
 ```
 
 **`L6E_LOG_PATH` is required.** Windsurf spawns MCP stdio servers with `cwd=/`, so without this env var `runs.jsonl` will be written to `/.l6e/runs.jsonl`, which is typically permission-denied.
+
+`L6E_API_KEY` and `L6E_CLOUD_SYNC` are optional — omit them to run fully local. When set, session run logs are synced to the l6e cloud after each `l6e_run_end`.
 
 If you installed `l6e-mcp` manually instead of using `uvx`:
 
@@ -49,7 +53,9 @@ If you installed `l6e-mcp` manually instead of using `uvx`:
     "l6e-budget": {
       "command": "l6e-mcp",
       "env": {
-        "L6E_LOG_PATH": "${HOME}/.l6e/runs.jsonl"
+        "L6E_LOG_PATH": "${HOME}/.l6e/runs.jsonl",
+        "L6E_API_KEY": "sk-l6e-...",
+        "L6E_CLOUD_SYNC": "1"
       }
     }
   }
@@ -60,12 +66,11 @@ If you installed `l6e-mcp` manually instead of using `uvx`:
 
 ## Verify
 
-Open the Cascade panel and click the **MCPs** icon in the top-right corner. The `l6e-budget` server should appear with five tools listed:
+Open the Cascade panel and click the **MCPs** icon in the top-right corner. The `l6e-budget` server should appear with four tools listed:
 
 - `l6e_run_start`
 - `l6e_authorize_call`
 - `l6e_record_usage`
-- `l6e_run_status`
 - `l6e_run_end`
 
 If the server does not appear, check that `uvx` is on your PATH (`which uvx`) or that `l6e-mcp` is installed (`pip show l6e-mcp`).
@@ -74,7 +79,7 @@ If the server does not appear, check that `uvx` is on your PATH (`which uvx`) or
 
 Add the enforcement rule to a Windsurf rules file so Cascade automatically follows the l6e lifecycle.
 
-The rule content is in [`.cursor/rules/l6e-budget-enforcement.mdc`](https://github.com/l6e-ai/l6e-mcp/blob/main/.cursor/rules/l6e-budget-enforcement.mdc) in the repository. Paste it into your Windsurf rules (`Cmd+Shift+P` → `Windsurf: Open Rules`).
+The rule content is in [`.windsurf/rules/l6e-budget-enforcement.md`](https://github.com/l6e-ai/l6e-mcp/blob/main/.windsurf/rules/l6e-budget-enforcement.md) in the repository. Paste it into your Windsurf rules (`Cmd+Shift+P` → `Windsurf: Open Rules`).
 
 ## Example conversation starter
 
