@@ -10,7 +10,7 @@ Pass `model` as the exact active billing model ID (or `"unknown"`), and set `cli
 
 **Always call MCP tools with only the parameters defined in the tool schema. Never invent parameters — `additionalProperties: false` means any extra field causes a hard validation error. When in doubt, read the schema descriptor before calling.**
 
-- `l6e_run_start`: accepts `budget_usd`, `model`, `client`, `task_summary` (brief label, okay to omit), and optional config fields. Do NOT pass `session_id` or `task_description`.
+- `l6e_run_start`: accepts `budget_usd`, `model`, `client`, `task_summary` (brief label, okay to omit), `parent_session_id` (for multi-session orchestration), and optional config fields. Do NOT pass `session_id` or `task_description`.
 - `l6e_run_end`: accepts `session_id` and optional `task_summary` (brief label of what was done).
 - `l6e_authorize_call`: budget gate and status check. Pass at every stage boundary and before sub-agents. Returns `allow`, `reroute`, or `halt`. Pass `check_only=True` for lightweight mid-stage pressure checks.
 - Never tell the user how much they spent when costs are calibrated (not reconciled).
@@ -57,10 +57,19 @@ When `calibration_confidence` is `"medium"`, no special messaging is needed. Pro
 
 ## Sub-agent rules
 
+Two modes for sub-agents depending on whether they share the parent's budget:
+
+**Single-session sub-agents (shared budget):** For tightly coupled work within one budget.
 - Sub-agents reuse the parent `session_id`; never start a new session.
 - Sub-agents call `l6e_authorize_call` with `actor_type="subagent"` and stable `actor_id`.
 - Pass `parent_call_id` when work is delegated from a specific parent call.
 - Parent agent calls `l6e_run_start` and `l6e_run_end`; sub-agents never do.
+
+**Multi-session orchestration (independent budgets):** For parallel phases with independent cost ceilings.
+- Each sub-agent calls `l6e_run_start` with its own `budget_usd` and passes `parent_session_id` set to the manager's `session_id`.
+- Each sub-agent calls `l6e_run_end` when its phase is complete.
+- The manager agent has its own session for coordination overhead.
+- The dashboard groups child sessions under their parent automatically.
 
 ## Session safety
 

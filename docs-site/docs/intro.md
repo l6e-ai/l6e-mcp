@@ -35,7 +35,7 @@ Then follow the setup guide for your editor:
 
 | Tool | Purpose |
 |---|---|
-| `l6e_run_start` | Open a new budget session. Returns `session_id`. |
+| `l6e_run_start` | Open a new budget session. Returns `session_id`. Accepts optional `parent_session_id` to link child sessions in multi-session orchestration. |
 | `l6e_authorize_call` | Gate-check a pending tool call and return a `call_id`. Pass `check_only=True` for a lightweight budget pressure check without recording a call. |
 | `l6e_record_usage` | Attach exact token usage to an existing `call_id` (idempotent). |
 | `l6e_run_end` | Close the session and flush the run log to `.l6e/runs.jsonl`. Returns exactness state, mode coverage gaps, and pending reconciliation count. |
