@@ -1,7 +1,9 @@
 """Budget authorization service used by MCP checkpoint transport."""
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
+from decimal import Decimal
 
 from l6e.costs import LiteLLMCostEstimator
 from l6e.gate import ConstraintGate
@@ -9,6 +11,8 @@ from l6e.router import LocalRouter
 from l6e.store import InMemoryRunStore
 
 from l6e_mcp.session_store import LocalSessionStore, SessionState
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -23,6 +27,8 @@ class AuthorizationDecision:
     pricing_confidence: str | None
     pricing_source: str | None
     model_pricing_known: bool | None
+    calibration_factor: float | None = None
+    calibration_source: str | None = None
 
 
 def authorize_call(
@@ -40,6 +46,7 @@ def authorize_call(
     call_mode: str | None,
     actual_prompt_tokens: int | None,
     actual_completion_tokens: int | None,
+    calibration_factor: float | None = None,
 ) -> AuthorizationDecision:
     """Run gate check and persist a pending (or reconciled) call row."""
     estimator = LiteLLMCostEstimator(
@@ -70,6 +77,15 @@ def authorize_call(
         completion_tokens,
     )
     estimated_cost = estimate_meta.cost_usd
+
+    applied_factor: float | None = None
+    if calibration_factor is not None and calibration_factor > 0:
+        estimated_cost = estimated_cost * Decimal(str(calibration_factor))
+        applied_factor = calibration_factor
+        logger.debug(
+            "manual_calibration_applied",
+            extra={"model": session.model, "factor": calibration_factor},
+        )
 
     if not estimate_meta.model_pricing_known:
         mode = session.policy.unknown_model_pricing_mode.value
@@ -175,6 +191,10 @@ def authorize_call(
         prompt_tokens,
         completion_tokens,
     )
+    final_cost = model_cost_meta.cost_usd
+    if applied_factor is not None:
+        final_cost = final_cost * Decimal(str(applied_factor))
+
     call = store.create_call(
         session_id=session.session_id,
         tool_name=tool_name,
@@ -182,7 +202,7 @@ def authorize_call(
         model_used=model_used,
         estimated_prompt_tokens=prompt_tokens if prompt_tokens is not None else 0,
         estimated_completion_tokens=completion_tokens if completion_tokens is not None else 0,
-        estimated_cost_usd=model_cost_meta.cost_usd,
+        estimated_cost_usd=final_cost,
         rerouted=response_action == "reroute",
         actual_prompt_tokens=actual_prompt_tokens if use_actual else None,
         actual_completion_tokens=actual_completion_tokens if use_actual else None,
@@ -203,4 +223,6 @@ def authorize_call(
         pricing_confidence=estimate_meta.pricing_confidence,
         pricing_source=estimate_meta.pricing_source,
         model_pricing_known=estimate_meta.model_pricing_known,
+        calibration_factor=applied_factor,
+        calibration_source="manual" if applied_factor is not None else None,
     )
