@@ -41,7 +41,7 @@ Edit `~/.openclaw/openclaw.json` and add the `mcpServers` block. If the file alr
 
 **`L6E_LOG_PATH` is required.** OpenClaw's gateway spawns MCP servers as child processes from `~/.openclaw/`, not your project directory. Without this env var, `runs.jsonl` will be written to an unpredictable location.
 
-`L6E_API_KEY` and `L6E_CLOUD_SYNC` are optional — omit them to run fully local. When set, session run logs are synced to the l6e cloud after each `l6e_run_end`.
+`L6E_API_KEY` and `L6E_CLOUD_SYNC` are optional — omit them to run fully local. When set, session run logs sync to the l6e cloud and gate decisions use your personal calibration factor. See [l6e.ai Integration](../concepts/cloud-api) for what cloud sync enables.
 
 If `uvx` is not on the PATH that OpenClaw sees, use the full path:
 

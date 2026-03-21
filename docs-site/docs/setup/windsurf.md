@@ -43,7 +43,7 @@ You can also open it through the UI: **Command Palette** (`Cmd+Shift+P`) → `Wi
 
 **`L6E_LOG_PATH` is required.** Windsurf spawns MCP stdio servers with `cwd=/`, so without this env var `runs.jsonl` will be written to `/.l6e/runs.jsonl`, which is typically permission-denied.
 
-`L6E_API_KEY` and `L6E_CLOUD_SYNC` are optional — omit them to run fully local. When set, session run logs are synced to the l6e cloud after each `l6e_run_end`.
+`L6E_API_KEY` and `L6E_CLOUD_SYNC` are optional — omit them to run fully local. When set, session run logs sync to the l6e cloud and gate decisions use your personal calibration factor. See [l6e.ai Integration](../concepts/cloud-api) for what cloud sync enables.
 
 If you installed `l6e-mcp` manually instead of using `uvx`:
 

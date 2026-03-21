@@ -10,6 +10,8 @@ import threading
 import time
 from dataclasses import dataclass
 
+from l6e_mcp import config as _config
+
 _DEFAULT_TTL_SECONDS = 300  # 5 minutes
 
 
@@ -58,6 +60,26 @@ class CalibrationCache:
                 del self._entries[session_id]
                 return None
             return entry
+
+    def get_with_manual_fallback(
+        self, session_id: str, model: str,
+    ) -> CachedCalibration | None:
+        """Return cached server factor, falling back to manual config for the model."""
+        cached = self.get(session_id)
+        if cached is not None:
+            return cached
+
+        factors = _config.get_manual_calibration_factors()
+        factor = factors.get(model)
+        if factor is not None and factor > 0:
+            return CachedCalibration(
+                factor=factor,
+                source="manual",
+                confidence=None,
+                factor_range=None,
+                fetched_at=time.time(),
+            )
+        return None
 
     def clear(self, session_id: str | None = None) -> None:
         with self._lock:

@@ -81,3 +81,79 @@ def send_task_summaries() -> bool:
     if env:
         return env in _TRUTHY
     return bool(_load_toml().get("send_task_summaries", True))
+
+
+def get_manual_calibration_factors() -> dict[str, float]:
+    """Return manually configured per-model calibration factors.
+
+    Precedence: L6E_CALIBRATION_FACTORS env var > TOML [calibration] section.
+    Env var format: "model1:factor1,model2:factor2"
+    """
+    env = os.environ.get("L6E_CALIBRATION_FACTORS", "").strip()
+    if env:
+        factors: dict[str, float] = {}
+        for entry in env.split(","):
+            entry = entry.strip()
+            if not entry:
+                continue
+            parts = entry.rsplit(":", 1)
+            if len(parts) != 2:
+                logger.warning("calibration_factors_malformed_entry", extra={"entry": entry})
+                continue
+            model, value = parts[0].strip(), parts[1].strip()
+            try:
+                factors[model] = float(value)
+            except ValueError:
+                logger.warning(
+                    "calibration_factors_invalid_value",
+                    extra={"model": model, "value": value},
+                )
+        return factors
+
+    toml_section = _load_toml().get("calibration")
+    if isinstance(toml_section, dict):
+        factors = {}
+        for model, value in toml_section.items():
+            try:
+                factors[model] = float(value)
+            except (ValueError, TypeError):
+                logger.warning(
+                    "calibration_factors_invalid_toml_value",
+                    extra={"model": model, "value": value},
+                )
+        return factors
+
+    return {}
+
+
+_CONFIG_TEMPLATE = """\
+# l6e configuration
+# Env vars take precedence over values in this file.
+
+# api_key = "sk-l6e-..."
+# cloud_endpoint = "https://api.l6e.ai"
+# cloud_sync = false
+# send_task_summaries = true
+
+# Per-model calibration factors (manual override).
+# These are used when cloud sync is off or as a fallback.
+# Server-side factors from billing import always take precedence.
+# [calibration]
+# claude-4-opus = 72.0
+# claude-4-sonnet = 45.0
+# claude-3.5-haiku = 12.0
+"""
+
+
+def ensure_config_template() -> None:
+    """Create ~/.l6e/config.toml with commented-out defaults if it doesn't exist."""
+    if _CONFIG_PATH.is_file():
+        return
+    if not _CONFIG_DIR.is_dir():
+        return
+    try:
+        _CONFIG_PATH.write_text(_CONFIG_TEMPLATE, encoding="utf-8")
+        _CONFIG_PATH.chmod(0o600)
+        logger.debug("config_template_created", extra={"path": str(_CONFIG_PATH)})
+    except OSError:
+        logger.debug("config_template_create_failed", exc_info=True)

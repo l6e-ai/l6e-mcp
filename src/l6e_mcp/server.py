@@ -469,7 +469,7 @@ async def l6e_authorize_call(
         )
         raw_cost = estimator.estimate(session.model, prompt_tokens, completion_tokens)
 
-        cached = _get_calibration_cache().get(session_id)
+        cached = _get_calibration_cache().get_with_manual_fallback(session_id, session.model)
         if cached is not None:
             projected_cost = raw_cost * Decimal(str(cached.factor))
             calibration_applied = True
@@ -490,6 +490,7 @@ async def l6e_authorize_call(
         }
         if calibration_applied:
             result["calibration_applied"] = True
+            result["calibration_source"] = cached.source if cached else None
 
         worker = _get_telemetry_worker()
         if worker is not None:
@@ -531,6 +532,9 @@ async def l6e_authorize_call(
         if server_result is not None:
             return server_result
 
+    manual_factors = _config.get_manual_calibration_factors()
+    manual_factor = manual_factors.get(session.model)
+
     decision = authorize_call(
         store=store,
         session=session,
@@ -545,6 +549,7 @@ async def l6e_authorize_call(
         call_mode=call_mode,
         actual_prompt_tokens=actual_prompt_tokens,
         actual_completion_tokens=actual_completion_tokens,
+        calibration_factor=manual_factor,
     )
     store.increment_checkpoint_calls(session_id)
 
@@ -561,6 +566,9 @@ async def l6e_authorize_call(
         result["call_id"] = decision.call_id
     if decision.action == "reroute" and decision.target_model is not None:
         result["target_model"] = decision.target_model
+    if decision.calibration_factor is not None:
+        result["calibration_factor"] = decision.calibration_factor
+        result["calibration_source"] = decision.calibration_source
     return result
 
 
@@ -711,6 +719,7 @@ async def l6e_run_end(
 
 
 def main() -> None:
+    _config.ensure_config_template()
     refresh_model_cost_map_async()
     mcp.run()
 
