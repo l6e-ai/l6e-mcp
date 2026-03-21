@@ -45,7 +45,7 @@ The `--` between the env vars and the server name is required — `-e` accepts m
 
 `L6E_LOG_PATH` should always be an absolute path. Claude Code spawns MCP servers as child processes, and the working directory is not guaranteed to be your project root.
 
-`L6E_API_KEY` and `L6E_CLOUD_SYNC` are optional — omit them to run fully local. When set, session run logs are synced to the l6e cloud after each `l6e_run_end`.
+`L6E_API_KEY` and `L6E_CLOUD_SYNC` are optional — omit them to run fully local. When set, session run logs sync to the l6e cloud and gate decisions use your personal calibration factor. See [l6e.ai Integration](../concepts/cloud-api) for what cloud sync enables.
 
 If `uvx` is not on the PATH that Claude Code sees, use the full path:
 

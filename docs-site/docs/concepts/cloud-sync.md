@@ -50,6 +50,12 @@ After setting these, restart your client. Cloud sync activates on the next `l6e_
 - **Calibration** — import billing data and l6e computes your personal calibration factor. See [Calibration](calibration) for details.
 - **Reconciliation** — match l6e sessions against provider billing to see how estimates compare to reality
 
+Cloud sync is also the mechanism that enables automatic calibration. When cloud sync is on, `l6e_authorize_call` gate decisions use your personal calibration factor from l6e.ai — computed from your billing imports. See [Calibration](calibration) for the calibration paths and [l6e.ai Integration](cloud-api) for the full setup guide.
+
+## How sync works
+
+Session reports sync asynchronously via a local outbox. Reports are queued at `l6e_run_end` and drained in a background thread on the next `l6e_run_start`. This means cloud sync never blocks your agent's workflow — data appears in the dashboard after the next session starts. If the network is down, reports accumulate locally and sync when connectivity returns.
+
 ## Disabling cloud sync
 
 Remove `L6E_CLOUD_SYNC` (or set it to `false`) and restart your client. Sessions continue to be stored locally. Previously synced data remains in the dashboard — delete it from **Settings → Data** if needed.

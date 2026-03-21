@@ -297,8 +297,6 @@ async def l6e_run_start(
         parent_session_id=parent_session_id,
     )
 
-    threading.Thread(target=_config.ensure_config_template, daemon=True).start()
-
     api_key = _config.get_api_key()
     if api_key and _config.is_cloud_sync_enabled():
         threading.Thread(
@@ -721,6 +719,7 @@ async def l6e_run_end(
 
 
 def main() -> None:
+    _config.ensure_config_template()
     refresh_model_cost_map_async()
     mcp.run()
 
