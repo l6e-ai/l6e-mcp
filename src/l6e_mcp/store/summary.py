@@ -61,7 +61,6 @@ def session_run_summary(session: SessionState, calls: list[CallState]) -> RunSum
         tool_call_counts={
             "l6e_run_start": 1,
             "l6e_authorize_call": session.checkpoint_calls,
-            "l6e_run_status": session.status_calls,
             "l6e_run_end": 1,
         },
     )
@@ -141,7 +140,7 @@ def build_session_report(
                 float(round(c.actual_cost_usd, 8)) if c.actual_cost_usd is not None else None
             ),
             "action": "reroute" if c.rerouted else "allow",
-            "actor_type": getattr(c, "actor_type", "parent_agent"),
+            "actor_type": c.actor_type,
             "created_at": c.created_at,
             "finished_at": (
                 c.created_at + c.elapsed_ms / 1000.0

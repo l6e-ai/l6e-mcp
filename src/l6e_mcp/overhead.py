@@ -9,7 +9,6 @@ from l6e.costs import LiteLLMCostEstimator
 OVERHEAD_TOKEN_ESTIMATES: dict[str, dict[str, int]] = {
     "l6e_run_start": {"prompt": 450, "completion": 120},
     "l6e_authorize_call": {"prompt": 380, "completion": 280},
-    "l6e_run_status": {"prompt": 220, "completion": 350},
     "l6e_record_usage": {"prompt": 310, "completion": 120},
     "l6e_run_end": {"prompt": 220, "completion": 100},
 }
