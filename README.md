@@ -5,7 +5,7 @@
 [![mypy](https://github.com/l6e-ai/l6e-mcp/actions/workflows/mypy.yml/badge.svg?branch=main)](https://github.com/l6e-ai/l6e-mcp/actions/workflows/mypy.yml)
 [![ruff](https://github.com/l6e-ai/l6e-mcp/actions/workflows/ruff.yml/badge.svg?branch=main)](https://github.com/l6e-ai/l6e-mcp/actions/workflows/ruff.yml)
 
-l6e gives your AI coding agent a budget. Set a dollar limit per task, and your agent will checkpoint before expensive operations, get halt signals when it's spending too much, and give you a structured cost-aware workflow. No proxy, no SDK — just an MCP server that works with Cursor, Claude Code, and Windsurf. Import your billing data and l6e learns your cost patterns — the more you use it, the tighter the calibration gets.
+l6e gives your AI coding agent a budget. Set a dollar limit per task, and your agent will checkpoint before expensive operations, get halt signals when it's spending too much, and give you a structured cost-aware workflow. No proxy, no SDK — just an MCP server that works with Cursor, Claude Code, and Windsurf. Import your billing data at [app.l6e.ai](https://app.l6e.ai) and l6e learns your cost patterns — the more you use it, the tighter the calibration gets.
 
 Session-scoped budget enforcement for AI coding assistants via the [Model Context Protocol](https://modelcontextprotocol.io/).
 
@@ -43,6 +43,27 @@ In Cursor, add to `.cursor/mcp.json`:
 **3. Add the enforcement rule**
 
 Add the [l6e budget enforcement rule](https://docs.l6e.ai/setup/cursor) to `.cursor/rules/` so your agent knows how to use the budget tools. See the [example rule](https://github.com/l6e-ai/l6e-mcp/blob/main/.cursor/rules/l6e-budget-enforcement.mdc) in this repo.
+
+**4. (Optional) Connect to app.l6e.ai**
+
+Create a free account at [app.l6e.ai](https://app.l6e.ai) to enable cloud sync, run history, and billing import for calibration. Set your API key in the MCP config:
+
+```json
+{
+  "mcpServers": {
+    "l6e": {
+      "command": "uvx",
+      "args": ["l6e-mcp"],
+      "env": {
+        "L6E_API_KEY": "your-api-key",
+        "L6E_CLOUD_SYNC": "1"
+      }
+    }
+  }
+}
+```
+
+Calibration tightens estimates as you import more billing data — sessions go from directionally accurate to within 2-3x of your actual costs.
 
 ## Tools
 
@@ -129,7 +150,7 @@ state is `exactness_degraded`.
 ## Known limitations
 
 - **Rerouting requires a local Ollama instance.** When `l6e_authorize_call` returns `"action": "reroute"`, the local router needs a running Ollama process with a compatible model installed. Without it, rerouting cannot be executed. The MCP protocol also has no primitive for forcing a model switch — reroute is always advisory, signaling the agent to prompt the user to select a cheaper model in their IDE settings.
-- **Local persistence only.** Sessions persist in a local SQLite database; there is no remote sync or team-level control plane in the OSS version.
+- **Local persistence by default.** Sessions persist in a local SQLite database (`~/.l6e/sessions.db`). Cloud sync is available with a free account at [app.l6e.ai](https://app.l6e.ai) — set `L6E_API_KEY` and `L6E_CLOUD_SYNC=1` to enable it. Team-level control plane is on the Pro roadmap.
 - **Estimate-first by default.** Exact real-time accounting requires `l6e_record_usage` calls from your agent with the actual token counts after each LLM call completes.
 - **Savings shows $0 when model pricing is unknown.** If the cost estimator returns `0.0` for either the requested or rerouted model, `savings_usd` in the run summary will be `0.0` regardless of any actual price difference. This happens when a model ID is not recognized by the LiteLLM pricing table. Check `savings_confidence` in `l6e_run_end` to gauge reliability.
 
