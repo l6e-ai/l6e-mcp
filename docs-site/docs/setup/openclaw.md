@@ -115,7 +115,7 @@ Add the enforcement rule to `AGENTS.md` in the agent workspace so it is loaded e
 - **All agents (default workspace)**: `~/.openclaw/workspace/AGENTS.md`
 - **Specific agent**: `~/.openclaw/agents/{agent_id}/AGENTS.md`
 
-The rule content is in [`mcp/.openclaw/AGENTS.md`](https://github.com/l6e-ai/l6e-mcp/blob/main/.openclaw/AGENTS.md) in the repository. Append its contents to your `AGENTS.md`.
+The rule content is in [`.openclaw/AGENTS.md`](https://github.com/l6e-ai/l6e-mcp/blob/main/.openclaw/AGENTS.md) in the repository. Append its contents to your `AGENTS.md`.
 
 ## Example conversation starter
 

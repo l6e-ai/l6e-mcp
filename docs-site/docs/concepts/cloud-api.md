@@ -5,7 +5,7 @@ sidebar_label: l6e.ai Integration
 sidebar_position: 4
 ---
 
-The l6e MCP server works fully local — no account required. An [l6e.ai](https://l6e.ai) account adds automatic calibration, a dashboard, and run history. Everything is free with generous usage limits.
+The l6e MCP server works fully local — no account required. An [l6e.ai](https://app.l6e.ai) account adds automatic calibration, a dashboard, and run history. Everything is free with generous usage limits.
 
 ## What you get
 

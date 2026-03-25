@@ -53,7 +53,7 @@ Out of the box, budgets are **directionally accurate**. The MCP protocol does no
 
 That's enough to change how the agent works. An agent with a $2 budget scopes tasks more tightly, launches fewer sub-agents, and stops earlier when a task balloons — even if the estimate-to-billing ratio is off. The behavioral enforcement is the point; accurate accounting makes it quantitatively tighter.
 
-**Calibration makes it billing-accurate.** Set manual per-model factors in `~/.l6e/config.toml` for immediate improvement, or sign up at [l6e.ai](https://l6e.ai) and import your billing data for automatic calibration that adapts as you use it. See [Calibration](concepts/calibration) for details.
+**Calibration makes it billing-accurate.** Set manual per-model factors in `~/.l6e/config.toml` for immediate improvement, or sign up at [app.l6e.ai](https://app.l6e.ai) and import your billing data for automatic calibration that adapts as you use it. See [Calibration](concepts/calibration) for details.
 
 **A practical starting point:** Set small budgets ($1–3) and observe how estimates track against your provider's actual costs. See [Local Enforcement](concepts/local-estimate-only) for a full explanation.
 
@@ -63,7 +63,7 @@ That's enough to change how the agent works. An agent with a $2 budget scopes ta
 |---|---|---|
 | `L6E_LOG_PATH` | `.l6e/runs.jsonl` (relative to cwd) | Override the run log path. **Always set this to an absolute path** (e.g. `~/.l6e/runs.jsonl`). The default is relative to the MCP server's working directory, which varies by client. |
 | `L6E_SESSION_DB_PATH` | `~/.l6e/sessions.db` | Override the local SQLite database path. |
-| `L6E_API_KEY` | _(unset)_ | API key for cloud sync. Get a key at [l6e.ai](https://l6e.ai). Can also be set in `~/.l6e/config.toml` as `api_key`. |
+| `L6E_API_KEY` | _(unset)_ | API key for cloud sync. Get a key at [app.l6e.ai](https://app.l6e.ai). Can also be set in `~/.l6e/config.toml` as `api_key`. |
 | `L6E_CLOUD_SYNC` | `false` | Set to `1` or `true` to sync session run logs to the l6e cloud. Requires `L6E_API_KEY`. |
 | `L6E_CALIBRATION_FACTORS` | _(unset)_ | Manual per-model calibration factors. Format: `"model1:factor1,model2:factor2"`. Can also be set in `~/.l6e/config.toml` under `[calibration]`. See [Calibration](concepts/calibration). |
 | `L6E_SEND_TASK_SUMMARIES` | `true` | Whether to include task summaries in cloud-synced session reports. Summaries are always stored locally regardless of this setting. |

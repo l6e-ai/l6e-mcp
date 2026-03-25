@@ -106,7 +106,7 @@ Add the enforcement rule to a `CLAUDE.md` file so Claude Code automatically foll
 - **User-global** (applies to all projects): `~/.claude/CLAUDE.md`
 - **Project-level** (checked into git, shared with team): `CLAUDE.md` or `.claude/CLAUDE.md` in your project root
 
-The rule content is in [`mcp/.claude/CLAUDE.md`](https://github.com/l6e-ai/l6e-mcp/blob/main/.claude/CLAUDE.md) in the repository. Copy its contents into your `CLAUDE.md`.
+The rule content is in [`.claude/CLAUDE.md`](https://github.com/l6e-ai/l6e-mcp/blob/main/.claude/CLAUDE.md) in the repository. Copy its contents into your `CLAUDE.md`.
 
 ## Example conversation starter
 
