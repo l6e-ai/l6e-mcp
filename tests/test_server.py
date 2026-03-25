@@ -563,6 +563,34 @@ async def test_exact_mode_includes_net_savings_usd(client, tmp_path):
 # --- Error path tests ---
 
 
+async def test_run_start_rejects_zero_budget(client):
+    result = await client.call_tool(
+        "l6e_run_start",
+        {"budget_usd": 0, "model": "gpt-4o"},
+        raise_on_error=False,
+    )
+    assert result.is_error
+    assert "positive" in str(result).lower()
+
+
+async def test_run_start_rejects_negative_budget(client):
+    result = await client.call_tool(
+        "l6e_run_start",
+        {"budget_usd": -5.0, "model": "gpt-4o"},
+        raise_on_error=False,
+    )
+    assert result.is_error
+
+
+async def test_run_start_rejects_infinite_budget(client):
+    result = await client.call_tool(
+        "l6e_run_start",
+        {"budget_usd": float("inf"), "model": "gpt-4o"},
+        raise_on_error=False,
+    )
+    assert result.is_error
+
+
 async def test_run_start_invalid_unknown_model_pricing_mode(client):
     result = await client.call_tool(
         "l6e_run_start",

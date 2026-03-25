@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import atexit
 import logging
+import math
 import os
 import secrets
 import threading
@@ -202,10 +203,13 @@ def _budget_pressure(pct_used: float) -> str:
 
 
 def _spend_snapshot(
-    session: SessionState, store: LocalSessionStore | None = None,
+    session: SessionState,
+    store: LocalSessionStore | None = None,
+    calls: list | None = None,
 ) -> dict:
     store = store or _get_session_store()
-    calls = store.list_calls_for_session(session.session_id)
+    if calls is None:
+        calls = store.list_calls_for_session(session.session_id)
     summary = session_run_summary(session, calls)
     spent = summary.total_cost
     budget = Decimal(str(session.policy.budget))
@@ -265,6 +269,8 @@ async def l6e_run_start(
     ] = "warn_only",
 ) -> dict:
     """Start a new budget-enforced session. Call once at the start of every task before any other work. Returns session_id in the response — store it and pass it to all subsequent l6e calls. Do NOT pass session_id or task_description — use task_summary for a brief task label."""  # noqa: E501 — MCP tool docstring surfaces verbatim to agents; truncating it degrades guidance quality
+    if not math.isfinite(budget_usd) or budget_usd <= 0:
+        raise ToolError("budget_usd must be a positive finite number.")
     model = model.strip() or "unknown"
     start_summary = task_summary[:200] if task_summary else None
     try:
@@ -346,7 +352,8 @@ async def _try_server_authorize(
     )
     raw_cost = estimator.estimate(session.model, prompt_tokens, completion_tokens)
 
-    snapshot = _spend_snapshot(session, store=store)
+    calls = store.list_calls_for_session(session.session_id)
+    snapshot = _spend_snapshot(session, store=store, calls=calls)
 
     server_resp = await try_remote_authorize(
         api_key=api_key,
@@ -419,8 +426,9 @@ async def l6e_authorize_call(
     ] = None,
     check_only: Annotated[
         bool,
-        "If True, returns a read-only budget projection without recording a call "
-        "or making a gate decision. Use for lightweight mid-stage pressure checks.",
+        "If True, records a lightweight checkpoint call for spend tracking "
+        "but does not make a gate decision (no allow/reroute/halt). "
+        "Use for mid-stage pressure checks.",
     ] = False,
     actor_type: Annotated[
         str,
@@ -454,7 +462,7 @@ async def l6e_authorize_call(
         "Must be provided alongside actual_prompt_tokens to take effect.",
     ] = None,
 ) -> dict:
-    """Budget gate and status check. Call at every stage boundary and before sub-agents. Pass check_only=True for lightweight mid-stage pressure checks (no call record, no gate action). Otherwise returns allow, reroute, or halt — proceed only on allow."""  # noqa: E501 — MCP tool docstring surfaces verbatim to agents; truncating it degrades guidance quality
+    """Budget gate and status check. Call at every stage boundary and before sub-agents. Pass check_only=True for lightweight mid-stage pressure checks (records spend but no gate action). Otherwise returns allow, reroute, or halt — proceed only on allow."""  # noqa: E501 — MCP tool docstring surfaces verbatim to agents; truncating it degrades guidance quality
     store = _get_session_store()
     session = _require_session(session_id, store=store)
 
@@ -492,7 +500,8 @@ async def l6e_authorize_call(
         )
         store.increment_checkpoint_calls(session_id)
         session = store.require_active_session(session_id)
-        snapshot = _spend_snapshot(session, store=store)
+        calls = store.list_calls_for_session(session_id)
+        snapshot = _spend_snapshot(session, store=store, calls=calls)
 
         result: dict = {
             "budget_pressure": snapshot["budget_pressure"],
@@ -565,7 +574,8 @@ async def l6e_authorize_call(
     store.increment_checkpoint_calls(session_id)
     session = store.require_active_session(session_id)
 
-    snapshot = _spend_snapshot(session, store=store)
+    calls = store.list_calls_for_session(session_id)
+    snapshot = _spend_snapshot(session, store=store, calls=calls)
     result = {
         "action": decision.action,
         "remaining_usd": snapshot["remaining_usd"],
@@ -708,7 +718,7 @@ async def l6e_run_end(
         "plan_mode_exact_capable": session.plan_mode_exact_capable,
         "agent_mode_exact_capable": session.agent_mode_exact_capable,
     }
-    mode_coverage_gaps = [
+    modes_without_exact_coverage = [
         mode
         for mode, capable in [
             ("ask", session.ask_mode_exact_capable),
@@ -726,7 +736,7 @@ async def l6e_run_end(
         "exactness_state": run_exactness.value,
         "last_reconciled_at": last_reconciled_at,
         "mode_coverage": mode_coverage,
-        "mode_coverage_gaps": mode_coverage_gaps,
+        "modes_without_exact_coverage": modes_without_exact_coverage,
     }
 
 

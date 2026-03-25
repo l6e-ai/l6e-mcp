@@ -8,6 +8,8 @@ import logging
 import os
 import stat
 import sys
+import threading
+import time
 import tomllib
 from pathlib import Path
 from typing import Any
@@ -20,18 +22,46 @@ _CONFIG_PATH = _CONFIG_DIR / "config.toml"
 
 _TRUTHY = frozenset({"1", "true", "yes"})
 
+_toml_cache: dict[str, Any] | None = None
+_toml_cache_time: float = 0.0
+_toml_cache_lock = threading.Lock()
+_TOML_TTL = 30.0
+
 
 def _load_toml() -> dict[str, Any]:
-    path = Path(os.environ.get("L6E_CONFIG_PATH", str(_CONFIG_PATH)))
-    if not path.is_file():
-        return {}
-    try:
-        _check_permissions(path)
-        with open(path, "rb") as f:
-            return tomllib.load(f)
-    except Exception:
-        logger.debug("config_toml_read_failed", exc_info=True)
-        return {}
+    global _toml_cache, _toml_cache_time  # noqa: PLW0603
+
+    now = time.monotonic()
+    if _toml_cache is not None and (now - _toml_cache_time) < _TOML_TTL:
+        return _toml_cache
+
+    with _toml_cache_lock:
+        if _toml_cache is not None and (time.monotonic() - _toml_cache_time) < _TOML_TTL:
+            return _toml_cache
+
+        path = Path(os.environ.get("L6E_CONFIG_PATH", str(_CONFIG_PATH)))
+        if not path.is_file():
+            result: dict[str, Any] = {}
+        else:
+            try:
+                _check_permissions(path)
+                with open(path, "rb") as f:
+                    result = tomllib.load(f)
+            except Exception:
+                logger.debug("config_toml_read_failed", exc_info=True)
+                result = {}
+
+        _toml_cache = result
+        _toml_cache_time = time.monotonic()
+        return result
+
+
+def _reset_toml_cache() -> None:
+    """Clear the TOML cache. Used by tests for isolation."""
+    global _toml_cache, _toml_cache_time  # noqa: PLW0603
+    with _toml_cache_lock:
+        _toml_cache = None
+        _toml_cache_time = 0.0
 
 
 def _check_permissions(path: Path) -> None:
