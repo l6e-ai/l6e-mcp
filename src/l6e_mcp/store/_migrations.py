@@ -1,11 +1,61 @@
-"""SQLite schema initialization and incremental migrations."""
+"""SQLite schema initialization and versioned forward migrations."""
 from __future__ import annotations
 
 import sqlite3
+import time
+from collections.abc import Callable
 
+_MigrateFn = Callable[[sqlite3.Connection], None]
+_MIGRATIONS: list[tuple[int, _MigrateFn]] = []
+
+
+def _register(version: int) -> Callable[[_MigrateFn], _MigrateFn]:
+    def decorator(fn: _MigrateFn) -> _MigrateFn:
+        _MIGRATIONS.append((version, fn))
+        return fn
+    return decorator
+
+
+# ---------------------------------------------------------------------------
+# Public entry point (called by SessionRepository.__init__)
+# ---------------------------------------------------------------------------
 
 def init_schema(conn: sqlite3.Connection) -> None:
-    """Create all tables and indexes if they do not already exist."""
+    """Ensure all tables exist and run any pending forward migrations."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS schema_version (
+            version INTEGER NOT NULL,
+            applied_at REAL NOT NULL
+        )
+        """
+    )
+    row = conn.execute("SELECT version FROM schema_version").fetchone()
+    current = int(row["version"]) if row else 0
+
+    for version, migrate_fn in _MIGRATIONS:
+        if version > current:
+            migrate_fn(conn)
+            current = version
+
+    if row is None:
+        conn.execute(
+            "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
+            (current, time.time()),
+        )
+    elif current > int(row["version"]):
+        conn.execute(
+            "UPDATE schema_version SET version = ?, applied_at = ?",
+            (current, time.time()),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Migration v1 — baseline schema (all tables, indexes, column migrations)
+# ---------------------------------------------------------------------------
+
+@_register(1)
+def _migrate_to_v1(conn: sqlite3.Connection) -> None:
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS sessions (
@@ -68,7 +118,8 @@ def init_schema(conn: sqlite3.Connection) -> None:
         """
     )
     conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_calls_session_id ON calls(session_id, call_index)"
+        "CREATE INDEX IF NOT EXISTS idx_calls_session_id "
+        "ON calls(session_id, call_index)"
     )
     conn.execute(
         """
@@ -146,6 +197,13 @@ def init_schema(conn: sqlite3.Connection) -> None:
     _drop_column(conn, "sessions", "proxy_mode")
     _drop_column(conn, "sessions", "advanced_fallback_enabled")
 
+
+LATEST_VERSION: int = _MIGRATIONS[-1][0] if _MIGRATIONS else 0
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 def _ensure_column(
     conn: sqlite3.Connection, table: str, column: str, column_type: str

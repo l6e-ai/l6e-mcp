@@ -4,7 +4,12 @@ from __future__ import annotations
 import sqlite3
 
 from l6e_mcp.store._connection import _create_connection, get_connection
-from l6e_mcp.store._migrations import _drop_column, _ensure_column, init_schema
+from l6e_mcp.store._migrations import (
+    LATEST_VERSION,
+    _drop_column,
+    _ensure_column,
+    init_schema,
+)
 from l6e_mcp.store.sessions import SessionRepository
 
 
@@ -161,6 +166,76 @@ def test_create_connection_enables_wal_without_init_schema(tmp_path):
     row = conn.execute("PRAGMA journal_mode").fetchone()
     assert row[0] == "wal", f"Expected WAL mode but got: {row[0]}"
     conn.close()
+
+
+def test_init_schema_sets_version_to_latest(tmp_path):
+    db = tmp_path / "sessions.db"
+    conn = get_connection(db)
+    with conn:
+        init_schema(conn)
+    row = conn.execute("SELECT version FROM schema_version").fetchone()
+    assert row is not None
+    assert int(row["version"]) == LATEST_VERSION
+
+
+def test_init_schema_creates_schema_version_table(tmp_path):
+    db = tmp_path / "sessions.db"
+    conn = get_connection(db)
+    with conn:
+        init_schema(conn)
+    tables = {
+        row[0]
+        for row in sqlite3.connect(db).execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }
+    assert "schema_version" in tables
+
+
+def test_init_schema_on_existing_unversioned_db_migrates_to_latest(tmp_path):
+    """An old DB with tables but no schema_version should be upgraded."""
+    db = tmp_path / "sessions.db"
+    conn = get_connection(db)
+    with conn:
+        conn.execute(
+            """
+            CREATE TABLE sessions (
+                session_id TEXT PRIMARY KEY,
+                model TEXT NOT NULL,
+                policy_json TEXT NOT NULL,
+                source TEXT NOT NULL,
+                log_path TEXT,
+                state TEXT NOT NULL,
+                next_call_index INTEGER NOT NULL,
+                created_at REAL NOT NULL,
+                ended_at REAL,
+                finalized_at REAL
+            )
+            """
+        )
+    with conn:
+        init_schema(conn)
+    row = conn.execute("SELECT version FROM schema_version").fetchone()
+    assert int(row["version"]) == LATEST_VERSION
+    cols = {
+        str(r["name"])
+        for r in conn.execute("PRAGMA table_info(sessions)").fetchall()
+    }
+    assert "accounting_mode" in cols
+    assert "start_summary" in cols
+
+
+def test_init_schema_skips_already_applied_migrations(tmp_path):
+    """When version is already at LATEST, no migration functions should run."""
+    db = tmp_path / "sessions.db"
+    conn = get_connection(db)
+    with conn:
+        init_schema(conn)
+    row_before = conn.execute("SELECT applied_at FROM schema_version").fetchone()
+    with conn:
+        init_schema(conn)
+    row_after = conn.execute("SELECT applied_at FROM schema_version").fetchone()
+    assert row_before["applied_at"] == row_after["applied_at"]
 
 
 def test_create_connection_long_path_does_not_leak_symlink_dirs(tmp_path, monkeypatch):
