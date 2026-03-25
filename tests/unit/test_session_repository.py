@@ -207,10 +207,11 @@ def test_increment_status_calls_on_finalized_session_raises(tmp_path):
 def _create_stale_session(repo, db_path, session_id, *, age_seconds, n_calls=0):
     """Create a session with created_at in the past, optionally with backdated calls."""
     created_at = time.time() - age_seconds
-    from l6e_mcp.store._connection import make_connection
+    from l6e_mcp.store._connection import get_connection
     from l6e_mcp.store._serialization import _policy_to_json
 
-    with make_connection(db_path) as conn:
+    conn = get_connection(db_path)
+    with conn:
         conn.execute(
             """
             INSERT INTO sessions (
@@ -250,7 +251,7 @@ def _create_stale_session(repo, db_path, session_id, *, age_seconds, n_calls=0):
                 estimated_cost_usd=Decimal("0.01"),
                 rerouted=False,
             )
-            with make_connection(db_path) as conn:
+            with conn:
                 conn.execute(
                     "UPDATE calls SET created_at = ? WHERE call_id = ?",
                     (created_at, call.call_id),

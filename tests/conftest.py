@@ -12,6 +12,7 @@ from l6e_mcp.server import (
     _reset_telemetry_worker,
     mcp,
 )
+from l6e_mcp.store._connection import close_thread_connections
 
 
 @pytest.fixture(autouse=True)
@@ -24,12 +25,14 @@ def reset_sessions(tmp_path, monkeypatch):
     """
     monkeypatch.setenv("L6E_LOG_PATH", str(tmp_path / "runs.jsonl"))
     monkeypatch.setenv("L6E_SESSION_DB_PATH", str(tmp_path / "sessions.db"))
+    close_thread_connections()
     _reset_toml_cache()
     _reset_session_store()
     _reset_calibration_cache()
     _reset_telemetry_worker()
     _reset_report_worker()
     yield
+    close_thread_connections()
     _reset_toml_cache()
     _reset_session_store()
     _reset_calibration_cache()

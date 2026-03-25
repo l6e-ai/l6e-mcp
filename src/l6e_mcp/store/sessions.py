@@ -8,7 +8,7 @@ from pathlib import Path
 from l6e._types import PipelinePolicy
 
 from l6e_mcp.store import schema as store_schema
-from l6e_mcp.store._connection import _db_path, make_connection
+from l6e_mcp.store._connection import _db_path, get_connection
 from l6e_mcp.store._migrations import init_schema
 from l6e_mcp.store._serialization import (
     _default_mode_coverage,
@@ -56,7 +56,8 @@ class SessionRepository:
     def __init__(self, db_path: Path | None = None) -> None:
         self._path = db_path or _db_path()
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        with make_connection(self._path) as conn:
+        conn = get_connection(self._path)
+        with conn:
             init_schema(conn)
 
     def create(
@@ -101,7 +102,8 @@ class SessionRepository:
             if agent_mode_exact_capable is None
             else agent_mode_exact_capable
         )
-        with make_connection(self._path) as conn:
+        conn = get_connection(self._path)
+        with conn:
             conn.execute(
                 """
                 INSERT INTO sessions (
@@ -134,7 +136,8 @@ class SessionRepository:
         return session
 
     def get(self, session_id: str) -> SessionState | None:
-        with make_connection(self._path) as conn:
+        conn = get_connection(self._path)
+        with conn:
             row = conn.execute(
                 "SELECT * FROM sessions WHERE session_id = ?",
                 (session_id,),
@@ -158,7 +161,8 @@ class SessionRepository:
     ) -> SessionState:
         finalized_at = time.time()
         effective_ended_at = ended_at if ended_at is not None else finalized_at
-        with make_connection(self._path) as conn:
+        conn = get_connection(self._path)
+        with conn:
             row = conn.execute(
                 "SELECT state FROM sessions WHERE session_id = ?",
                 (session_id,),
@@ -188,7 +192,8 @@ class SessionRepository:
     def increment_checkpoint_calls(self, session_id: str, increment_by: int = 1) -> None:
         if increment_by <= 0:
             return
-        with make_connection(self._path) as conn:
+        conn = get_connection(self._path)
+        with conn:
             updated = conn.execute(
                 """
                 UPDATE sessions
@@ -205,7 +210,8 @@ class SessionRepository:
     def increment_status_calls(self, session_id: str, increment_by: int = 1) -> None:
         if increment_by <= 0:
             return
-        with make_connection(self._path) as conn:
+        conn = get_connection(self._path)
+        with conn:
             updated = conn.execute(
                 """
                 UPDATE sessions
@@ -222,7 +228,8 @@ class SessionRepository:
     def list_stale_active(self, max_idle_seconds: float = 3600) -> list[StaleSessionInfo]:
         """Return active sessions whose last activity is older than the threshold."""
         cutoff = time.time() - max_idle_seconds
-        with make_connection(self._path) as conn:
+        conn = get_connection(self._path)
+        with conn:
             rows = conn.execute(
                 """
                 SELECT s.session_id,

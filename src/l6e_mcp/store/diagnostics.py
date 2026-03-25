@@ -4,7 +4,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from l6e_mcp.store._connection import _db_path, make_connection
+from l6e_mcp.store._connection import _db_path, get_connection
 
 
 class DiagnosticsRepository:
@@ -24,7 +24,8 @@ class DiagnosticsRepository:
         callback_request_id: str | None = None,
         callback_trace_id: str | None = None,
     ) -> None:
-        with make_connection(self._path) as conn:
+        conn = get_connection(self._path)
+        with conn:
             conn.execute(
                 """
                 INSERT INTO orphan_callbacks (
@@ -55,7 +56,8 @@ class DiagnosticsRepository:
         error_code: str | None,
         details_json: str | None,
     ) -> None:
-        with make_connection(self._path) as conn:
+        conn = get_connection(self._path)
+        with conn:
             conn.execute(
                 """
                 INSERT INTO reconciliation_attempts (
@@ -86,7 +88,8 @@ class DiagnosticsRepository:
         classification: str,
         payload_ref_or_json: str,
     ) -> None:
-        with make_connection(self._path) as conn:
+        conn = get_connection(self._path)
+        with conn:
             conn.execute(
                 """
                 INSERT INTO unmatched_usage_events (

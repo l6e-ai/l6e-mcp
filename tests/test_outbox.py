@@ -11,7 +11,7 @@ from l6e._types import BudgetMode, PipelinePolicy
 
 from l6e_mcp import outbox
 from l6e_mcp.session_store import LocalSessionStore
-from l6e_mcp.store._connection import make_connection
+from l6e_mcp.store._connection import get_connection
 from l6e_mcp.store._serialization import _policy_to_json
 from l6e_mcp.store.calls import CallRepository
 from l6e_mcp.store.sessions import SessionRepository
@@ -146,7 +146,8 @@ def _create_backdated_session(db_path, session_id, *, age_seconds, n_calls=0):
     """Insert a session with created_at in the past, optionally with backdated calls."""
     repo = SessionRepository(db_path)  # noqa: F841 — ensures schema init
     created_at = time.time() - age_seconds
-    with make_connection(db_path) as conn:
+    conn = get_connection(db_path)
+    with conn:
         conn.execute(
             """
             INSERT INTO sessions (
@@ -184,7 +185,7 @@ def _create_backdated_session(db_path, session_id, *, age_seconds, n_calls=0):
                 estimated_cost_usd=Decimal("0.01"),
                 rerouted=False,
             )
-            with make_connection(db_path) as conn:
+            with conn:
                 conn.execute(
                     "UPDATE calls SET created_at = ? WHERE call_id = ?",
                     (created_at, call.call_id),
