@@ -35,6 +35,7 @@ from l6e_mcp.session_store import (
     SessionState,
     session_run_summary,
 )
+from l6e_mcp.store import schema as store_schema
 from l6e_mcp.store.summary import build_session_report
 
 _logger = logging.getLogger(__name__)
@@ -291,6 +292,16 @@ async def l6e_run_start(
             "unknown_model_pricing_mode must be one of: "
             "warn_only, reroute_required, halt_on_unknown_pricing"
         ) from exc
+    if accounting_mode is not None:
+        accounting_mode = accounting_mode.strip().lower()
+        if accounting_mode not in store_schema.VALID_ACCOUNTING_MODES:
+            allowed = ", ".join(sorted(store_schema.VALID_ACCOUNTING_MODES))
+            raise ToolError(f"accounting_mode must be one of: {allowed}")
+    if usage_channel is not None:
+        usage_channel = usage_channel.strip().lower()
+        if usage_channel not in store_schema.VALID_USAGE_CHANNELS:
+            allowed = ", ".join(sorted(store_schema.VALID_USAGE_CHANNELS))
+            raise ToolError(f"usage_channel must be one of: {allowed}")
     session_id = _make_session_id(client)
     policy = PipelinePolicy(
         budget=budget_usd,
@@ -476,6 +487,18 @@ async def l6e_authorize_call(
     """Budget gate and status check. Call at every stage boundary and before sub-agents. Pass check_only=True for lightweight mid-stage pressure checks (records spend but no gate action). Otherwise returns allow, reroute, or halt — proceed only on allow."""  # noqa: E501 — MCP tool docstring surfaces verbatim to agents; truncating it degrades guidance quality
     store = _get_session_store()
     session = _require_session(session_id, store=store)
+
+    actor_type = actor_type.strip().lower()
+    if actor_type not in store_schema.VALID_ACTOR_TYPES:
+        raise ToolError(
+            f"actor_type must be one of: {', '.join(sorted(store_schema.VALID_ACTOR_TYPES))}"
+        )
+    if call_mode is not None:
+        call_mode = call_mode.strip().lower()
+        if call_mode not in store_schema.VALID_CALL_MODES:
+            raise ToolError(
+                f"call_mode must be one of: {', '.join(sorted(store_schema.VALID_CALL_MODES))}"
+            )
 
     if check_only:
         prompt_tokens = estimated_prompt_tokens or estimated_tokens or 2000

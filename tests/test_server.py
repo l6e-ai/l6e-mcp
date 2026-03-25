@@ -602,6 +602,116 @@ async def test_run_start_invalid_unknown_model_pricing_mode(client):
     assert "warn_only" in error_text
 
 
+async def test_run_start_rejects_invalid_accounting_mode(client):
+    result = await client.call_tool(
+        "l6e_run_start",
+        {"budget_usd": 1.0, "model": "gpt-4o", "accounting_mode": "exact"},
+        raise_on_error=False,
+    )
+    assert result.is_error
+    assert "accounting_mode" in str(result)
+    assert "estimate_only" in str(result)
+
+
+async def test_run_start_rejects_invalid_usage_channel(client):
+    result = await client.call_tool(
+        "l6e_run_start",
+        {"budget_usd": 1.0, "model": "gpt-4o", "usage_channel": "cloud"},
+        raise_on_error=False,
+    )
+    assert result.is_error
+    assert "usage_channel" in str(result)
+    assert "hosted_edge" in str(result)
+
+
+async def test_run_start_normalizes_accounting_mode_case(client):
+    result = await client.call_tool(
+        "l6e_run_start",
+        {"budget_usd": 1.0, "model": "gpt-4o", "accounting_mode": "ESTIMATE_ONLY"},
+        raise_on_error=False,
+    )
+    assert not result.is_error
+    session = LocalSessionStore().get_session(result.data["session_id"])
+    assert session is not None
+    assert session.accounting_mode == "estimate_only"
+
+
+async def test_run_start_normalizes_usage_channel_case(client):
+    result = await client.call_tool(
+        "l6e_run_start",
+        {"budget_usd": 1.0, "model": "gpt-4o", "usage_channel": "Hosted_Edge"},
+        raise_on_error=False,
+    )
+    assert not result.is_error
+    session = LocalSessionStore().get_session(result.data["session_id"])
+    assert session is not None
+    assert session.usage_channel == "hosted_edge"
+
+
+async def test_authorize_rejects_invalid_actor_type(client):
+    session = await start_session(client, budget_usd=5.0, model="gpt-4o")
+    result = await client.call_tool(
+        "l6e_authorize_call",
+        {
+            "session_id": session["session_id"],
+            "tool_name": "test",
+            "actor_type": "debugger",
+        },
+        raise_on_error=False,
+    )
+    assert result.is_error
+    assert "actor_type" in str(result)
+    assert "parent_agent" in str(result)
+
+
+async def test_authorize_normalizes_actor_type_case(client):
+    session = await start_session(client, budget_usd=5.0, model="gpt-4o")
+    result = await client.call_tool(
+        "l6e_authorize_call",
+        {
+            "session_id": session["session_id"],
+            "tool_name": "test",
+            "actor_type": "SubAgent",
+            "actor_id": "sa_1",
+        },
+        raise_on_error=False,
+    )
+    assert not result.is_error
+    call = LocalSessionStore().get_call(result.data["call_id"])
+    assert call is not None
+    assert call.actor_type == "subagent"
+
+
+async def test_authorize_rejects_invalid_call_mode(client):
+    session = await start_session(client, budget_usd=5.0, model="gpt-4o")
+    result = await client.call_tool(
+        "l6e_authorize_call",
+        {
+            "session_id": session["session_id"],
+            "tool_name": "test",
+            "call_mode": "debug",
+        },
+        raise_on_error=False,
+    )
+    assert result.is_error
+    assert "call_mode" in str(result)
+    assert "agent" in str(result)
+
+
+async def test_authorize_normalizes_call_mode_case(client):
+    session = await start_session(client, budget_usd=5.0, model="gpt-4o")
+    result = await client.call_tool(
+        "l6e_authorize_call",
+        {
+            "session_id": session["session_id"],
+            "tool_name": "test",
+            "call_mode": "AGENT",
+        },
+        raise_on_error=False,
+    )
+    assert not result.is_error
+
+
 async def test_authorize_check_only_unknown_session_returns_error(client):
     result = await client.call_tool(
         "l6e_authorize_call",
