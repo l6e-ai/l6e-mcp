@@ -60,7 +60,8 @@ def authorize_call(
     )
     for call in store.list_calls_for_session(session.session_id):
         runtime_store.record_call(call.effective_record())
-    gate = ConstraintGate(policy=session.policy, router=LocalRouter())
+    router = LocalRouter()
+    gate = ConstraintGate(policy=session.policy, router=router)
 
     if actual_prompt_tokens is not None and actual_completion_tokens is not None:
         use_actual = True
@@ -101,7 +102,7 @@ def authorize_call(
                 model_pricing_known=False,
             )
         if mode == "reroute_required":
-            local_model = LocalRouter().best_local_model()
+            local_model = router.best_local_model()
             if local_model is None:
                 return AuthorizationDecision(
                     action="halt",

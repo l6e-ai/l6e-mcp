@@ -7,7 +7,6 @@ from __future__ import annotations
 import logging
 import os
 import stat
-import sys
 import threading
 import time
 import tomllib
@@ -65,14 +64,14 @@ def _reset_toml_cache() -> None:
 
 
 def _check_permissions(path: Path) -> None:
-    """Warn once if the config file is world-readable."""
+    """Warn if the config file is world-readable."""
     try:
         mode = path.stat().st_mode
         if mode & (stat.S_IRGRP | stat.S_IROTH):
-            print(
-                f"l6e: warning: {path} is readable by other users. "
+            logger.warning(
+                "Config file %s is readable by other users. "
                 "Run `chmod 600 ~/.l6e/config.toml` to restrict access.",
-                file=sys.stderr,
+                path,
             )
     except OSError:
         pass
