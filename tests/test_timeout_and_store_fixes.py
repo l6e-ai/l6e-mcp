@@ -204,7 +204,7 @@ def test_recover_stale_sessions_respects_deadline(tmp_path, monkeypatch):
     from l6e._types import BudgetMode, PipelinePolicy
 
     from l6e_mcp import outbox
-    from l6e_mcp.store._connection import make_connection
+    from l6e_mcp.store._connection import get_connection
     from l6e_mcp.store._serialization import _policy_to_json
     from l6e_mcp.store.sessions import SessionRepository
 
@@ -216,9 +216,10 @@ def test_recover_stale_sessions_respects_deadline(tmp_path, monkeypatch):
     SessionRepository(db)  # ensure schema
     created_at = time.time() - 7200
 
+    conn = get_connection(db)
     for i in range(3):
         sid = f"stale_{i}"
-        with make_connection(db) as conn:
+        with conn:
             conn.execute(
                 """
                 INSERT INTO sessions (

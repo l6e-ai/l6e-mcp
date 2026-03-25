@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import atexit
 import logging
+import threading
 
 import httpx
 
@@ -23,29 +24,36 @@ logger = logging.getLogger(__name__)
 _DEFAULT_TIMEOUT = 1.0
 
 _client: httpx.AsyncClient | None = None
+_client_lock = threading.Lock()
 
 
 def _get_async_client(timeout: float = _DEFAULT_TIMEOUT) -> httpx.AsyncClient:
     global _client  # noqa: PLW0603
-    if _client is None:
+    if _client is not None:
+        return _client
+    with _client_lock:
+        if _client is not None:
+            return _client
         _client = httpx.AsyncClient(timeout=timeout)
-    return _client
+        return _client
 
 
 def _shutdown_client() -> None:
     global _client  # noqa: PLW0603
-    if _client is not None:
+    with _client_lock:
+        to_close = _client
+        _client = None
+    if to_close is not None:
         try:
             # Best-effort sync close; the event loop may already be torn down.
             import asyncio
             try:
                 loop = asyncio.get_running_loop()
-                loop.create_task(_client.aclose())
+                loop.create_task(to_close.aclose())
             except RuntimeError:
-                asyncio.run(_client.aclose())
+                asyncio.run(to_close.aclose())
         except Exception:
             pass
-        _client = None
 
 
 atexit.register(_shutdown_client)
@@ -54,7 +62,8 @@ atexit.register(_shutdown_client)
 def _reset_client() -> None:
     """Clear the cached client. Used by tests for isolation."""
     global _client  # noqa: PLW0603
-    _client = None
+    with _client_lock:
+        _client = None
 
 
 async def try_remote_authorize(

@@ -50,4 +50,4 @@ async def test_run_end_includes_lag_and_coverage_fields():
         assert data["exactness_state"] == "partial_exact"
         assert data["last_reconciled_at"] is not None
         assert data["mode_coverage"]["ask_mode_exact_capable"] is True
-        assert "agent" in data["mode_coverage_gaps"]
+        assert "agent" in data["modes_without_exact_coverage"]

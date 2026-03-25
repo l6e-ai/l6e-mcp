@@ -12,7 +12,7 @@ from l6e._types import CallRecord, PromptComplexity
 from l6e_mcp.contracts.exactness import ExactnessState
 from l6e_mcp.contracts.mode_coverage import ModeCoverage, mode_exact_capable_for_call_mode
 from l6e_mcp.core.exactness import normalize_call_exactness_state
-from l6e_mcp.store._connection import _db_path, make_connection
+from l6e_mcp.store._connection import _db_path, get_connection
 from l6e_mcp.store._serialization import _call_from_row
 
 
@@ -141,7 +141,8 @@ class CallRepository:
         call_id = f"call_{secrets.token_hex(8)}"
         effective_correlation_key = correlation_key or call_id
         effective_correlation_source = correlation_source or "checkpoint_call_id"
-        with make_connection(self._path) as conn:
+        conn = get_connection(self._path)
+        with conn:
             # Atomically claim the next call index with a single UPDATE...RETURNING
             # statement. This prevents a TOCTOU race where two concurrent connections
             # both SELECT the same next_call_index before either writes.
@@ -240,7 +241,8 @@ class CallRepository:
         return call
 
     def get(self, call_id: str) -> CallState | None:
-        with make_connection(self._path) as conn:
+        conn = get_connection(self._path)
+        with conn:
             row = conn.execute(
                 """
                 SELECT c.*, s.accounting_mode AS session_accounting_mode
@@ -253,7 +255,8 @@ class CallRepository:
         return _call_from_row(row) if row is not None else None
 
     def list_for_session(self, session_id: str) -> list[CallState]:
-        with make_connection(self._path) as conn:
+        conn = get_connection(self._path)
+        with conn:
             rows = conn.execute(
                 """
                 SELECT c.*, s.accounting_mode AS session_accounting_mode
@@ -267,7 +270,8 @@ class CallRepository:
         return [_call_from_row(row) for row in rows]
 
     def latest_pending(self, session_id: str) -> CallState | None:
-        with make_connection(self._path) as conn:
+        conn = get_connection(self._path)
+        with conn:
             row = conn.execute(
                 """
                 SELECT c.*, s.accounting_mode AS session_accounting_mode
@@ -282,7 +286,8 @@ class CallRepository:
         return _call_from_row(row) if row is not None else None
 
     def find_pending_by_correlation_key(self, correlation_key: str) -> CallState | None:
-        with make_connection(self._path) as conn:
+        conn = get_connection(self._path)
+        with conn:
             row = conn.execute(
                 """
                 SELECT c.*, s.accounting_mode AS session_accounting_mode
@@ -298,7 +303,8 @@ class CallRepository:
 
     def reconcile(self, request: ReconcileRequest) -> CallState:
         reconciled_at = time.time()
-        with make_connection(self._path) as conn:
+        conn = get_connection(self._path)
+        with conn:
             row = conn.execute(
                 """
                 SELECT c.status, c.actual_prompt_tokens, c.actual_completion_tokens,

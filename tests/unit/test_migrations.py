@@ -3,13 +3,13 @@ from __future__ import annotations
 
 import sqlite3
 
-from l6e_mcp.store._connection import make_connection
+from l6e_mcp.store._connection import _create_connection, get_connection
 from l6e_mcp.store._migrations import _drop_column, _ensure_column, init_schema
 from l6e_mcp.store.sessions import SessionRepository
 
 
-def test_make_connection_returns_row_factory(tmp_path):
-    conn = make_connection(tmp_path / "test.db")
+def test_create_connection_returns_row_factory(tmp_path):
+    conn = _create_connection(tmp_path / "test.db")
     conn.execute("CREATE TABLE t (a TEXT)")
     conn.execute("INSERT INTO t VALUES ('hello')")
     row = conn.execute("SELECT * FROM t").fetchone()
@@ -19,7 +19,8 @@ def test_make_connection_returns_row_factory(tmp_path):
 
 def test_init_schema_creates_tables(tmp_path):
     db = tmp_path / "sessions.db"
-    with make_connection(db) as conn:
+    conn = get_connection(db)
+    with conn:
         init_schema(conn)
     with sqlite3.connect(db) as conn:
         tables = {
@@ -37,15 +38,17 @@ def test_init_schema_creates_tables(tmp_path):
 
 def test_init_schema_is_idempotent(tmp_path):
     db = tmp_path / "sessions.db"
-    with make_connection(db) as conn:
+    conn = get_connection(db)
+    with conn:
         init_schema(conn)
-    with make_connection(db) as conn:
+    with conn:
         init_schema(conn)  # must not raise
 
 
 def test_ensure_column_adds_missing_column(tmp_path):
     db = tmp_path / "test.db"
-    with make_connection(db) as conn:
+    conn = get_connection(db)
+    with conn:
         conn.execute("CREATE TABLE t (a TEXT)")
         _ensure_column(conn, "t", "b", "INTEGER NOT NULL DEFAULT 0")
         cols = {row["name"] for row in conn.execute("PRAGMA table_info(t)").fetchall()}
@@ -54,7 +57,8 @@ def test_ensure_column_adds_missing_column(tmp_path):
 
 def test_ensure_column_noops_on_existing(tmp_path):
     db = tmp_path / "test.db"
-    with make_connection(db) as conn:
+    conn = get_connection(db)
+    with conn:
         conn.execute("CREATE TABLE t (a TEXT, b INTEGER)")
         _ensure_column(conn, "t", "b", "INTEGER")
         cols = [row["name"] for row in conn.execute("PRAGMA table_info(t)").fetchall()]
@@ -63,7 +67,8 @@ def test_ensure_column_noops_on_existing(tmp_path):
 
 def test_drop_column_removes_existing_column(tmp_path):
     db = tmp_path / "test.db"
-    with make_connection(db) as conn:
+    conn = get_connection(db)
+    with conn:
         conn.execute("CREATE TABLE t (a TEXT, b INTEGER)")
         _drop_column(conn, "t", "b")
         cols = {row["name"] for row in conn.execute("PRAGMA table_info(t)").fetchall()}
@@ -73,7 +78,8 @@ def test_drop_column_removes_existing_column(tmp_path):
 
 def test_drop_column_noops_on_missing_column(tmp_path):
     db = tmp_path / "test.db"
-    with make_connection(db) as conn:
+    conn = get_connection(db)
+    with conn:
         conn.execute("CREATE TABLE t (a TEXT)")
         _drop_column(conn, "t", "nonexistent")  # must not raise
         cols = {row["name"] for row in conn.execute("PRAGMA table_info(t)").fetchall()}
@@ -84,7 +90,8 @@ def test_init_schema_drops_proxy_mode_from_old_database(tmp_path):
     """Old databases with proxy_mode NOT NULL should be migrated on init_schema."""
     db = tmp_path / "sessions.db"
     # Simulate an old database schema that still has proxy_mode and advanced_fallback_enabled
-    with make_connection(db) as conn:
+    conn = get_connection(db)
+    with conn:
         conn.execute(
             """
             CREATE TABLE sessions (
@@ -112,7 +119,7 @@ def test_init_schema_drops_proxy_mode_from_old_database(tmp_path):
         )
 
     # Running init_schema should apply the drop migrations
-    with make_connection(db) as conn:
+    with conn:
         init_schema(conn)
 
     # Now sessions can be created without proxy_mode
@@ -128,20 +135,17 @@ def test_init_schema_drops_proxy_mode_from_old_database(tmp_path):
     assert session.session_id == "session_cursor_2026-03-14_test1"
 
     # Verify proxy_mode column is gone
-    with make_connection(db) as conn:
+    with conn:
         cols = {row["name"] for row in conn.execute("PRAGMA table_info(sessions)").fetchall()}
     assert "proxy_mode" not in cols
     assert "advanced_fallback_enabled" not in cols
 
 
-def test_make_connection_enables_wal_without_init_schema(tmp_path):
-    """WAL mode should be active on every connection from make_connection,
+def test_create_connection_enables_wal_without_init_schema(tmp_path):
+    """WAL mode should be active on every connection from _create_connection,
     even if SessionRepository.init_schema has never been called.
-    Opening a CallRepository alone (which does NOT call init_schema) must
-    still result in WAL mode on connections it opens.
     """
     db = tmp_path / "wal_test.db"
-    # Initialize schema via SessionRepository (creates tables)
     from l6e._types import BudgetMode, PipelinePolicy
     sessions = SessionRepository(db)
     sessions.create(
@@ -152,18 +156,16 @@ def test_make_connection_enables_wal_without_init_schema(tmp_path):
         log_path=None,
     )
 
-    # Open a raw make_connection (simulating what CallRepository does) on a DIFFERENT
-    # fresh db — this never goes through init_schema. WAL pragma must still be set.
     fresh_db = tmp_path / "wal_fresh.db"
-    conn = make_connection(fresh_db)
+    conn = _create_connection(fresh_db)
     row = conn.execute("PRAGMA journal_mode").fetchone()
     assert row[0] == "wal", f"Expected WAL mode but got: {row[0]}"
     conn.close()
 
 
-def test_make_connection_long_path_does_not_leak_symlink_dirs(tmp_path, monkeypatch):
+def test_create_connection_long_path_does_not_leak_symlink_dirs(tmp_path, monkeypatch):
     """When a db path exceeds the macOS socket path limit and a symlink is created,
-    repeated calls to make_connection for the same db must reuse the same symlink
+    repeated calls to _create_connection for the same db must reuse the same symlink
     directory rather than creating a new one on each call.
     """
     import tempfile
@@ -180,11 +182,11 @@ def test_make_connection_long_path_does_not_leak_symlink_dirs(tmp_path, monkeypa
     # Count subdirectories before
     before = set(l6e_db_dir.glob("*")) if l6e_db_dir.exists() else set()
 
-    c1 = conn_mod.make_connection(db)
+    c1 = conn_mod._create_connection(db)
     c1.close()
-    c2 = conn_mod.make_connection(db)
+    c2 = conn_mod._create_connection(db)
     c2.close()
-    c3 = conn_mod.make_connection(db)
+    c3 = conn_mod._create_connection(db)
     c3.close()
 
     after = set(l6e_db_dir.glob("*"))
