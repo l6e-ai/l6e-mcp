@@ -127,6 +127,7 @@ const config: Config = {
             {label: 'GitHub', href: 'https://github.com/l6e-ai/l6e-mcp'},
             {label: 'PyPI', href: 'https://pypi.org/project/l6e-mcp/'},
             {label: 'l6e.ai', href: 'https://l6e.ai'},
+            {label: 'app.l6e.ai', href: 'https://app.l6e.ai'},
           ],
         },
       ],

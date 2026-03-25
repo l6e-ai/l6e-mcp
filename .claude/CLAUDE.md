@@ -7,16 +7,16 @@ Pass `model` as the exact active billing model ID (or `"unknown"`), and set `cli
 
 - `l6e_run_start`: accepts `budget_usd`, `model`, `client`, `task_summary` (brief label, okay to omit), `parent_session_id` (for multi-session orchestration), and optional config fields. Do NOT pass `session_id` or `task_description`.
 - `l6e_run_end`: accepts `session_id` and optional `task_summary` (brief label of what was done).
-- `l6e_authorize_call`: budget gate and status check. Pass at every stage boundary and before subagents. Returns `allow`, `reroute`, or `halt`. Pass `check_only=True` for lightweight mid-stage pressure checks.
+- `l6e_authorize_call`: budget gate and status check. Pass at every stage boundary and before sub-agents. Returns `allow`, `reroute`, or `halt`. Pass `check_only=True` for lightweight mid-stage pressure checks.
 - Never tell the user how much they spent when costs are calibrated (not reconciled).
 
 ## Checkpoint policy
 
 All budget checks use `l6e_authorize_call`. Pass `check_only=True` for lightweight pressure checks (no call record, no gate decision). Omit `check_only` (or pass `False`) for full gate checks that return `allow`/`reroute`/`halt` and record a call.
 
-**Subagent gate (blocking prerequisite):** You MUST call `l6e_authorize_call` with `actor_type="subagent"` and obtain an `allow` response BEFORE launching any subagent. Do not launch the subagent, do not write its prompt, do not invoke the tool until you have a `call_id` from this check. There are no exceptions — budget size, perceived task cheapness, and tool type are all irrelevant.
+**Sub-agent gate (blocking prerequisite):** You MUST call `l6e_authorize_call` with `actor_type="subagent"` and obtain an `allow` response BEFORE launching any sub-agent. Do not launch the sub-agent, do not write its prompt, do not invoke the tool until you have a `call_id` from this check. There are no exceptions — budget size, perceived task cheapness, and tool type are all irrelevant.
 
-**Post-subagent checkpoint:** After any subagent completes, immediately call `l6e_authorize_call` with `check_only=True` before continuing work. Subagents are the most expensive single operations — their cost is unpredictable because they make their own chain of tool calls. If `budget_pressure` is `"high"` or `"critical"`, call `l6e_authorize_call` (full gate, without `check_only`) and inform the user of spend so far before proceeding.
+**Post-sub-agent checkpoint:** After any sub-agent completes, immediately call `l6e_authorize_call` with `check_only=True` before continuing work. Sub-agents are the most expensive single operations — their cost is unpredictable because they make their own chain of tool calls. If `budget_pressure` is `"high"` or `"critical"`, call `l6e_authorize_call` (full gate, without `check_only`) and inform the user of spend so far before proceeding.
 
 **Stage transitions (blocking prerequisite):** You MUST call `l6e_authorize_call` at every stage boundary before beginning new work. Required transitions include but are not limited to: after `l6e_run_start` (use `tool_name="planning"`), search → implement, implement → test, test → debug. Do not begin the next stage until you have a `call_id` from this check.
 
