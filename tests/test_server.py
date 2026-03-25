@@ -276,7 +276,8 @@ async def test_reconcile_unknown_call_is_tool_error(client):
     assert result.is_error is True
 
 
-async def test_check_only_is_readonly(client):
+async def test_check_only_accumulates_spend(client):
+    """check_only=True records a real call, so successive calls decrease remaining."""
     session = await start_session(client, budget_usd=5.0)
     args = {
         "session_id": session["session_id"],
@@ -287,8 +288,8 @@ async def test_check_only_is_readonly(client):
     r2 = await client.call_tool("l6e_authorize_call", args, raise_on_error=False)
     assert not r1.is_error
     assert not r2.is_error
-    assert r1.data["remaining_usd"] == r2.data["remaining_usd"]
-    assert r1.data["budget_pressure"] == r2.data["budget_pressure"]
+    assert r2.data["remaining_usd"] < r1.data["remaining_usd"]
+    assert r2.data["pct_used"] > r1.data["pct_used"]
 
 
 async def test_run_status_exposes_mode_coverage_and_lag_indicators(client):
@@ -545,17 +546,6 @@ async def test_exact_mode_includes_net_savings_usd(client, tmp_path):
         raise_on_error=False,
     )
 
-    status = await client.call_tool(
-        "l6e_authorize_call",
-        {"session_id": session["session_id"], "tool_name": "status", "check_only": True},
-        raise_on_error=False,
-    )
-    assert not status.is_error
-    assert "overhead_usd" not in status.data
-    assert "savings_confidence" not in status.data
-    assert "net_savings_usd" not in status.data
-    assert "net_savings_unavailable" not in status.data
-
     end = await client.call_tool(
         "l6e_run_end",
         {"session_id": session["session_id"]},
@@ -795,8 +785,8 @@ async def test_authorize_check_only_accepts_estimates(client):
 
 
 async def test_authorize_check_only_projects_cost(client):
-    """check_only=True with large token estimates must project higher spend
-    than with small estimates, and projections must be transient."""
+    """check_only=True records real calls, so remaining decreases monotonically.
+    A larger estimate produces a bigger drop than a smaller one."""
     session = await start_session(client, budget_usd=5.0, model="gpt-4o")
     sid = session["session_id"]
 
@@ -840,13 +830,13 @@ async def test_authorize_check_only_projects_cost(client):
         raise_on_error=False,
     )
     assert not repeat_small.is_error
-    assert repeat_small.data["remaining_usd"] == small.data["remaining_usd"], (
-        "Projection must be transient — no call record should persist"
+    assert repeat_small.data["remaining_usd"] < large.data["remaining_usd"], (
+        "Each check_only call accumulates spend — remaining must keep decreasing"
     )
 
 
-async def test_authorize_check_only_does_not_create_call_record(client):
-    """check_only=True must not create a call record in the store."""
+async def test_authorize_check_only_creates_call_record(client):
+    """check_only=True records a real call so spend accumulates."""
     session = await start_session(client, budget_usd=5.0, model="gpt-4o")
     sid = session["session_id"]
 
@@ -862,7 +852,9 @@ async def test_authorize_check_only_does_not_create_call_record(client):
         raise_on_error=False,
     )
     calls = LocalSessionStore().list_calls_for_session(sid)
-    assert len(calls) == 0, "check_only must not create a call record"
+    assert len(calls) == 1, "check_only must create a call record"
+    assert calls[0].estimated_prompt_tokens == 2000
+    assert calls[0].estimated_completion_tokens == 400
 
 
 async def test_authorize_check_only_uses_cached_calibration(client):
@@ -939,15 +931,14 @@ async def test_authorize_check_only_falls_back_when_cache_expired(client):
     assert "calibration_applied" not in result.data
 
 
-async def test_authorize_check_only_increments_status_calls_not_checkpoint(client):
-    """check_only=True must increment status_calls, not checkpoint_calls."""
+async def test_authorize_check_only_increments_checkpoint_calls(client):
+    """check_only=True creates a real call and increments checkpoint_calls."""
     session = await start_session(client, budget_usd=5.0, model="gpt-4o")
     sid = session["session_id"]
     store = LocalSessionStore()
 
     before = store.get_session(sid)
     assert before is not None
-    initial_status = before.status_calls
     initial_checkpoint = before.checkpoint_calls
 
     await client.call_tool(
@@ -962,8 +953,42 @@ async def test_authorize_check_only_increments_status_calls_not_checkpoint(clien
 
     after = store.get_session(sid)
     assert after is not None
-    assert after.status_calls == initial_status + 1
-    assert after.checkpoint_calls == initial_checkpoint
+    assert after.checkpoint_calls == initial_checkpoint + 1
+
+
+async def test_check_only_spend_visible_in_full_gate_remaining(client):
+    """Spend from check_only calls must be reflected in subsequent full-gate remaining."""
+    session = await start_session(client, budget_usd=5.0, model="gpt-4o")
+    sid = session["session_id"]
+
+    check = await client.call_tool(
+        "l6e_authorize_call",
+        {
+            "session_id": sid,
+            "tool_name": "status",
+            "check_only": True,
+            "estimated_prompt_tokens": 2000,
+            "estimated_completion_tokens": 400,
+        },
+        raise_on_error=False,
+    )
+    assert not check.is_error
+    remaining_after_check = check.data["remaining_usd"]
+
+    gate = await client.call_tool(
+        "l6e_authorize_call",
+        {
+            "session_id": sid,
+            "tool_name": "implement",
+            "estimated_prompt_tokens": 2000,
+            "estimated_completion_tokens": 400,
+        },
+        raise_on_error=False,
+    )
+    assert not gate.is_error
+    assert gate.data["remaining_usd"] < remaining_after_check, (
+        "Full-gate remaining must reflect the check_only call's spend"
+    )
 
 
 # ---------------------------------------------------------------------------

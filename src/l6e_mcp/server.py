@@ -459,9 +459,6 @@ async def l6e_authorize_call(
     session = _require_session(session_id, store=store)
 
     if check_only:
-        store.increment_status_calls(session_id)
-        snapshot = _spend_snapshot(session, store=store)
-
         prompt_tokens = estimated_prompt_tokens or estimated_tokens or 2000
         completion_tokens = estimated_completion_tokens or 400
         estimator = LiteLLMCostEstimator(
@@ -471,22 +468,36 @@ async def l6e_authorize_call(
 
         cached = _get_calibration_cache().get_with_manual_fallback(session_id, session.model)
         if cached is not None:
-            projected_cost = raw_cost * Decimal(str(cached.factor))
+            estimated_cost = raw_cost * Decimal(str(cached.factor))
             calibration_applied = True
         else:
-            projected_cost = raw_cost
+            estimated_cost = raw_cost
             calibration_applied = False
 
-        budget = Decimal(str(session.policy.budget))
-        spent = Decimal(str(snapshot["spent_usd"])) + projected_cost
-        remaining = budget - spent
-        pct_used = (spent / budget * 100) if budget > 0 else Decimal("0")
+        store.create_call(
+            session_id=session.session_id,
+            tool_name=tool_name,
+            model_requested=session.model,
+            model_used=session.model,
+            estimated_prompt_tokens=prompt_tokens,
+            estimated_completion_tokens=completion_tokens,
+            estimated_cost_usd=estimated_cost,
+            rerouted=False,
+            actor_type=actor_type,
+            actor_id=actor_id,
+            actor_name=actor_name,
+            parent_call_id=parent_call_id,
+            call_mode=call_mode,
+            raw_estimated_cost_usd=raw_cost if calibration_applied else None,
+        )
+        store.increment_checkpoint_calls(session_id)
+        session = store.require_active_session(session_id)
+        snapshot = _spend_snapshot(session, store=store)
 
-        budget_pressure = _budget_pressure(float(pct_used))
         result: dict = {
-            "budget_pressure": budget_pressure,
-            "remaining_usd": float(round(remaining, 6)),
-            "pct_used": float(round(pct_used, 2)),
+            "budget_pressure": snapshot["budget_pressure"],
+            "remaining_usd": snapshot["remaining_usd"],
+            "pct_used": snapshot["pct_used"],
         }
         if calibration_applied:
             result["calibration_applied"] = True
@@ -500,12 +511,12 @@ async def l6e_authorize_call(
                 estimated_prompt_tokens=prompt_tokens,
                 estimated_completion_tokens=completion_tokens,
                 raw_projected_cost_usd=float(raw_cost),
-                calibrated_projected_cost_usd=float(projected_cost),
+                calibrated_projected_cost_usd=float(estimated_cost),
                 calibration_factor=cached.factor if cached else None,
                 calibration_source=cached.source if cached else None,
                 budget_usd=session.policy.budget,
                 spent_usd=snapshot["spent_usd"],
-                budget_pressure=budget_pressure,
+                budget_pressure=snapshot["budget_pressure"],
             ))
 
         return result
@@ -552,6 +563,7 @@ async def l6e_authorize_call(
         calibration_factor=manual_factor,
     )
     store.increment_checkpoint_calls(session_id)
+    session = store.require_active_session(session_id)
 
     snapshot = _spend_snapshot(session, store=store)
     result = {
