@@ -60,6 +60,7 @@ _BACKGROUND_SYNC_DEADLINE_SECONDS = 30
 
 
 def _make_session_id(client: str = "unknown") -> str:
+    """Generate an opaque session identifier. Do not parse the format."""
     token = secrets.token_hex(4)
     return f"session_{client}_{date.today().isoformat()}_{token}"
 
