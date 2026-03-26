@@ -324,6 +324,7 @@ async def l6e_run_start(
         agent_mode_exact_capable=agent_mode_exact_capable,
         start_summary=start_summary,
         parent_session_id=parent_session_id,
+        client=client,
     )
 
     api_key = _config.get_api_key()

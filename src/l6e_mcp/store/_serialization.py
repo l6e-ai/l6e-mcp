@@ -124,6 +124,9 @@ def _session_from_row(row: sqlite3.Row) -> SessionState:
         parent_session_id=(
             str(row["parent_session_id"]) if "parent_session_id" in row.keys() and row["parent_session_id"] is not None else None  # noqa: SIM118, E501
         ),
+        client=(
+            str(row["client"]) if "client" in row.keys() and row["client"] is not None else None  # noqa: SIM118, E501
+        ),
     )
 
 
