@@ -362,18 +362,21 @@ async def _try_server_authorize(
     actor_name: str | None,
     parent_call_id: str | None,
     call_mode: str | None,
+    model_override: str | None = None,
 ) -> dict | None:
     """Try server-side authorize with calibrated cost factors.
 
     Returns the MCP response dict on success, or None to fall back to local auth.
     """
+    billing_model = model_override or session.model
+
     prompt_tokens = estimated_prompt_tokens or estimated_tokens or 2000
     completion_tokens = estimated_completion_tokens or 400
 
     estimator = LiteLLMCostEstimator(
         fallback_cost_per_1k_tokens=session.policy.unknown_model_cost_per_1k_tokens
     )
-    raw_cost = estimator.estimate(session.model, prompt_tokens, completion_tokens)
+    raw_cost = estimator.estimate(billing_model, prompt_tokens, completion_tokens)
 
     calls = store.list_calls_for_session(session.session_id)
     snapshot = _spend_snapshot(session, store=store, calls=calls)
@@ -382,7 +385,7 @@ async def _try_server_authorize(
         api_key=api_key,
         endpoint=_config.get_cloud_endpoint(),
         session_id=session.session_id,
-        model=session.model,
+        model=billing_model,
         tool_name=tool_name,
         estimated_cost_usd=float(raw_cost),
         budget_usd=session.policy.budget,
@@ -396,7 +399,7 @@ async def _try_server_authorize(
         session_id=session.session_id,
         tool_name=tool_name,
         model_requested=session.model,
-        model_used=session.model,
+        model_used=billing_model,
         estimated_prompt_tokens=prompt_tokens,
         estimated_completion_tokens=completion_tokens,
         estimated_cost_usd=calibrated_cost,
@@ -438,6 +441,12 @@ async def _try_server_authorize(
 async def l6e_authorize_call(
     session_id: Annotated[str, "Session ID from l6e_run_start"],
     tool_name: Annotated[str, "Name of the tool or stage about to run — pass the stage label here (e.g. 'planning', 'implement'). This is NOT a 'stage' parameter; the field is called tool_name."],  # noqa: E501 — Annotated string is the MCP parameter description shown verbatim to agents; must be unambiguous
+    model: Annotated[
+        str | None,
+        "Optional model for this specific call, overriding the session model. "
+        "Use when the client delegates to a different model "
+        "(e.g. Haiku for sub-agent work in an Opus session).",
+    ] = None,
     estimated_tokens: Annotated[int, "Estimated prompt token count for this call"] = 2000,
     estimated_prompt_tokens: Annotated[
         int | None,
@@ -501,15 +510,17 @@ async def l6e_authorize_call(
                 f"call_mode must be one of: {', '.join(sorted(store_schema.VALID_CALL_MODES))}"
             )
 
+    billing_model = model.strip() if model else session.model
+
     if check_only:
         prompt_tokens = estimated_prompt_tokens or estimated_tokens or 2000
         completion_tokens = estimated_completion_tokens or 400
         estimator = LiteLLMCostEstimator(
             fallback_cost_per_1k_tokens=session.policy.unknown_model_cost_per_1k_tokens
         )
-        raw_cost = estimator.estimate(session.model, prompt_tokens, completion_tokens)
+        raw_cost = estimator.estimate(billing_model, prompt_tokens, completion_tokens)
 
-        cached = _get_calibration_cache().get_with_manual_fallback(session_id, session.model)
+        cached = _get_calibration_cache().get_with_manual_fallback(session_id, billing_model)
         if cached is not None:
             estimated_cost = raw_cost * Decimal(str(cached.factor))
             calibration_applied = True
@@ -521,7 +532,7 @@ async def l6e_authorize_call(
             session_id=session.session_id,
             tool_name=tool_name,
             model_requested=session.model,
-            model_used=session.model,
+            model_used=billing_model,
             estimated_prompt_tokens=prompt_tokens,
             estimated_completion_tokens=completion_tokens,
             estimated_cost_usd=estimated_cost,
@@ -551,7 +562,7 @@ async def l6e_authorize_call(
         if worker is not None:
             worker.enqueue(StatusTelemetryPayload(
                 session_id=session_id,
-                model=session.model,
+                model=billing_model,
                 estimated_prompt_tokens=prompt_tokens,
                 estimated_completion_tokens=completion_tokens,
                 raw_projected_cost_usd=float(raw_cost),
@@ -583,12 +594,13 @@ async def l6e_authorize_call(
             actor_name=actor_name,
             parent_call_id=parent_call_id,
             call_mode=call_mode,
+            model_override=billing_model if billing_model != session.model else None,
         )
         if server_result is not None:
             return server_result
 
     manual_factors = _config.get_manual_calibration_factors()
-    manual_factor = manual_factors.get(session.model)
+    manual_factor = manual_factors.get(billing_model)
 
     decision = authorize_call(
         store=store,
@@ -605,6 +617,7 @@ async def l6e_authorize_call(
         actual_prompt_tokens=actual_prompt_tokens,
         actual_completion_tokens=actual_completion_tokens,
         calibration_factor=manual_factor,
+        model_override=billing_model if billing_model != session.model else None,
     )
     store.increment_checkpoint_calls(session_id)
     session = store.require_active_session(session_id)
