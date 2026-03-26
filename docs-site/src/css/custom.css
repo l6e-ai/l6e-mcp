@@ -1,0 +1,94 @@
+/**
+ * l6e-mcp docs — Infima theme
+ * Brand tokens sourced from website-nextjs/l6e/src/app/globals.css
+ * Warm zinc palette (zinc-100 base) + green-700 accent
+ */
+
+:root {
+  /* Primary scale — green-700 (#16a34a) as accent */
+  --ifm-color-primary: #16a34a;
+  --ifm-color-primary-dark: #15803d;
+  --ifm-color-primary-darker: color-mix(in oklch, #16a34a 70%, black);
+  --ifm-color-primary-darkest: color-mix(in oklch, #16a34a 55%, black);
+  --ifm-color-primary-light: color-mix(in oklch, #16a34a 85%, white);
+  --ifm-color-primary-lighter: color-mix(in oklch, #16a34a 75%, white);
+  --ifm-color-primary-lightest: #dcfce7; /* green-100 — accent-subtle */
+
+  /* Backgrounds — warm zinc */
+  --ifm-background-color: #f4f4f5;          /* zinc-100 */
+  --ifm-background-surface-color: #ffffff;  /* white */
+  --ifm-navbar-background-color: #ffffff;
+  --ifm-footer-background-color: #ffffff;
+
+  /* Borders */
+  --ifm-color-emphasis-300: #e4e4e7; /* zinc-200 */
+  --ifm-toc-border-color: #e4e4e7;
+  --ifm-hr-border-color: #e4e4e7;
+
+  /* Typography */
+  --ifm-font-color-base: #18181b;    /* zinc-900 */
+  --ifm-font-color-secondary: #27272a; /* zinc-800 */
+  --ifm-heading-color: #18181b;
+
+  /* Code */
+  --ifm-code-font-size: 95%;
+  --docusaurus-highlighted-code-line-bg: color-mix(in oklch, #16a34a 15%, transparent);
+
+  /* Links */
+  --ifm-link-color: var(--ifm-color-primary);
+  --ifm-link-hover-color: var(--ifm-color-primary-dark);
+
+  /* Navbar */
+  --ifm-navbar-shadow: 0 1px 0 0 #e4e4e7;
+}
+
+[data-theme='dark'] {
+  /* Dark mode — keep forge's approach: lighter greens on dark zinc */
+  --ifm-color-primary: color-mix(in oklch, #16a34a 85%, white);
+  --ifm-color-primary-dark: #16a34a;
+  --ifm-color-primary-darker: color-mix(in oklch, #16a34a 85%, black);
+  --ifm-color-primary-darkest: color-mix(in oklch, #16a34a 70%, black);
+  --ifm-color-primary-light: color-mix(in oklch, #16a34a 85%, white);
+  --ifm-color-primary-lighter: color-mix(in oklch, #16a34a 75%, white);
+  --ifm-color-primary-lightest: color-mix(in oklch, #16a34a 65%, white);
+
+  --ifm-background-color: #18181b;          /* zinc-900 */
+  --ifm-background-surface-color: #27272a;  /* zinc-800 */
+  --ifm-navbar-background-color: #18181b;
+  --ifm-footer-background-color: #18181b;
+
+  --ifm-color-emphasis-300: #3f3f46; /* zinc-700 */
+  --ifm-toc-border-color: #3f3f46;
+  --ifm-hr-border-color: #3f3f46;
+
+  --ifm-font-color-base: #fafafa;   /* zinc-50 */
+  --ifm-heading-color: #fafafa;
+
+  --docusaurus-highlighted-code-line-bg: color-mix(in oklch, #16a34a 20%, transparent);
+  --ifm-navbar-shadow: 0 1px 0 0 #3f3f46;
+}
+
+/* ─── Sidebar ──────────────────────────────────────────────────────────────── */
+.menu__link--active {
+  font-weight: 600;
+}
+
+/* ─── Navbar ───────────────────────────────────────────────────────────────── */
+.navbar {
+  border-bottom: 1px solid var(--ifm-color-emphasis-300);
+}
+
+/* ─── Footer ───────────────────────────────────────────────────────────────── */
+.footer {
+  border-top: 1px solid var(--ifm-color-emphasis-300);
+}
+
+[data-theme='light'] .footer {
+  color: #27272a;
+}
+
+/* ─── Code blocks ──────────────────────────────────────────────────────────── */
+[data-theme='light'] pre,
+[data-theme='light'] code {
+  background: #f4f4f5;
+}

@@ -1,0 +1,225 @@
+"""SQLite schema initialization and versioned forward migrations."""
+from __future__ import annotations
+
+import sqlite3
+import time
+from collections.abc import Callable
+
+_MigrateFn = Callable[[sqlite3.Connection], None]
+_MIGRATIONS: list[tuple[int, _MigrateFn]] = []
+
+
+def _register(version: int) -> Callable[[_MigrateFn], _MigrateFn]:
+    def decorator(fn: _MigrateFn) -> _MigrateFn:
+        _MIGRATIONS.append((version, fn))
+        return fn
+    return decorator
+
+
+# ---------------------------------------------------------------------------
+# Public entry point (called by SessionRepository.__init__)
+# ---------------------------------------------------------------------------
+
+def init_schema(conn: sqlite3.Connection) -> None:
+    """Ensure all tables exist and run any pending forward migrations."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS schema_version (
+            version INTEGER NOT NULL,
+            applied_at REAL NOT NULL
+        )
+        """
+    )
+    row = conn.execute("SELECT version FROM schema_version").fetchone()
+    current = int(row["version"]) if row else 0
+
+    for version, migrate_fn in _MIGRATIONS:
+        if version > current:
+            migrate_fn(conn)
+            current = version
+
+    if row is None:
+        conn.execute(
+            "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
+            (current, time.time()),
+        )
+    elif current > int(row["version"]):
+        conn.execute(
+            "UPDATE schema_version SET version = ?, applied_at = ?",
+            (current, time.time()),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Migration v1 — baseline schema (all tables, indexes, column migrations)
+# ---------------------------------------------------------------------------
+
+@_register(1)
+def _migrate_to_v1(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS sessions (
+            session_id TEXT PRIMARY KEY,
+            model TEXT NOT NULL,
+            policy_json TEXT NOT NULL,
+            source TEXT NOT NULL,
+            log_path TEXT,
+            accounting_mode TEXT NOT NULL DEFAULT 'estimate_only',
+            usage_channel TEXT NOT NULL DEFAULT 'none',
+            ask_mode_exact_capable INTEGER NOT NULL DEFAULT 0,
+            plan_mode_exact_capable INTEGER NOT NULL DEFAULT 0,
+            agent_mode_exact_capable INTEGER NOT NULL DEFAULT 0,
+            state TEXT NOT NULL,
+            next_call_index INTEGER NOT NULL,
+            checkpoint_calls INTEGER NOT NULL DEFAULT 0,
+            status_calls INTEGER NOT NULL DEFAULT 0,
+            created_at REAL NOT NULL,
+            ended_at REAL,
+            finalized_at REAL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS calls (
+            call_id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            call_index INTEGER NOT NULL,
+            tool_name TEXT NOT NULL,
+            model_requested TEXT NOT NULL,
+            model_used TEXT NOT NULL,
+            estimated_prompt_tokens INTEGER NOT NULL,
+            estimated_completion_tokens INTEGER NOT NULL,
+            estimated_cost_usd TEXT NOT NULL,
+            actual_prompt_tokens INTEGER,
+            actual_completion_tokens INTEGER,
+            actual_cost_usd TEXT,
+            rerouted INTEGER NOT NULL,
+            elapsed_ms REAL NOT NULL,
+            prompt_complexity TEXT,
+            is_multi_turn INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            reconciled_at REAL,
+            correlation_key TEXT,
+            correlation_source TEXT,
+            callback_request_id TEXT,
+            callback_trace_id TEXT,
+            exactness_state TEXT NOT NULL DEFAULT 'estimate_only',
+            hosted_ledger_id TEXT,
+            actor_type TEXT NOT NULL DEFAULT 'parent_agent',
+            actor_id TEXT,
+            actor_name TEXT,
+            parent_call_id TEXT,
+            call_mode TEXT,
+            mode_exact_capable INTEGER,
+            FOREIGN KEY(session_id) REFERENCES sessions(session_id)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_calls_session_id "
+        "ON calls(session_id, call_index)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS orphan_callbacks (
+            orphan_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT,
+            reason TEXT NOT NULL,
+            correlation_key TEXT,
+            correlation_source TEXT,
+            callback_request_id TEXT,
+            callback_trace_id TEXT,
+            payload_json TEXT NOT NULL,
+            created_at REAL NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS reconciliation_attempts (
+            attempt_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT,
+            call_id TEXT,
+            usage_source TEXT NOT NULL,
+            result TEXT NOT NULL,
+            idempotency_key TEXT,
+            error_code TEXT,
+            details_json TEXT,
+            created_at REAL NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS unmatched_usage_events (
+            event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT,
+            call_id TEXT,
+            usage_source TEXT NOT NULL,
+            provider_request_id TEXT,
+            provider_trace_id TEXT,
+            classification TEXT NOT NULL,
+            payload_ref_or_json TEXT NOT NULL,
+            created_at REAL NOT NULL
+        )
+        """
+    )
+    # Incremental column migrations for existing databases
+    _ensure_column(conn, "calls", "correlation_key", "TEXT")
+    _ensure_column(conn, "calls", "correlation_source", "TEXT")
+    _ensure_column(conn, "calls", "callback_request_id", "TEXT")
+    _ensure_column(conn, "calls", "callback_trace_id", "TEXT")
+    _ensure_column(conn, "calls", "actor_type", "TEXT NOT NULL DEFAULT 'parent_agent'")
+    _ensure_column(conn, "calls", "actor_id", "TEXT")
+    _ensure_column(conn, "calls", "actor_name", "TEXT")
+    _ensure_column(conn, "calls", "parent_call_id", "TEXT")
+    _ensure_column(conn, "calls", "exactness_state", "TEXT NOT NULL DEFAULT 'estimate_only'")
+    _ensure_column(conn, "calls", "estimated_prompt_tokens", "INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(conn, "calls", "estimated_completion_tokens", "INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(conn, "calls", "hosted_ledger_id", "TEXT")
+    _ensure_column(conn, "calls", "call_mode", "TEXT")
+    _ensure_column(conn, "calls", "mode_exact_capable", "INTEGER")
+    _ensure_column(conn, "sessions", "accounting_mode", "TEXT NOT NULL DEFAULT 'estimate_only'")
+    _ensure_column(conn, "sessions", "usage_channel", "TEXT NOT NULL DEFAULT 'none'")
+    _ensure_column(conn, "sessions", "ask_mode_exact_capable", "INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(conn, "sessions", "plan_mode_exact_capable", "INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(conn, "sessions", "agent_mode_exact_capable", "INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(conn, "sessions", "checkpoint_calls", "INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(conn, "sessions", "status_calls", "INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(conn, "sessions", "start_summary", "TEXT")
+    _ensure_column(conn, "sessions", "end_summary", "TEXT")
+    _ensure_column(conn, "sessions", "parent_session_id", "TEXT")
+    _ensure_column(conn, "calls", "raw_estimated_cost_usd", "TEXT")
+    # Drop columns removed in the proxy_mode/advanced_fallback cleanup so that
+    # existing databases (created before the schema change) can still INSERT rows.
+    _drop_column(conn, "sessions", "proxy_mode")
+    _drop_column(conn, "sessions", "advanced_fallback_enabled")
+
+
+LATEST_VERSION: int = _MIGRATIONS[-1][0] if _MIGRATIONS else 0
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _ensure_column(
+    conn: sqlite3.Connection, table: str, column: str, column_type: str
+) -> None:
+    existing = {
+        str(row["name"])
+        for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
+    }
+    if column not in existing:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+
+
+def _drop_column(conn: sqlite3.Connection, table: str, column: str) -> None:
+    existing = {
+        str(row["name"])
+        for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
+    }
+    if column in existing:
+        conn.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
