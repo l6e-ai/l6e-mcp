@@ -94,4 +94,4 @@ Set `"command": "/opt/homebrew/bin/uvx"` in your config.
 - [Full setup guide](https://github.com/l6e-ai/l6e-mcp)
 - [GitHub](https://github.com/l6e-ai/l6e-mcp)
 - [Issues](https://github.com/l6e-ai/l6e-mcp/issues)
-- [License: Apache 2.0](https://github.com/l6e-ai/l6e-mcp/blob/main/LICENSE)
+- [License: MIT](https://github.com/l6e-ai/l6e-mcp/blob/main/LICENSE)

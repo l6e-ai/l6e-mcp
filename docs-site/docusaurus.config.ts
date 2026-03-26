@@ -131,7 +131,7 @@ const config: Config = {
           ],
         },
       ],
-      copyright: `Copyright © ${new Date().getFullYear()} l6e AI. Apache 2.0 Licensed.`,
+      copyright: `Copyright © ${new Date().getFullYear()} l6e AI. MIT Licensed.`,
     },
     prism: {
       theme: prismThemes.github,

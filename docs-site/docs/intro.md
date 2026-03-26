@@ -105,4 +105,4 @@ Override these defaults by passing `ask_mode_exact_capable`, `plan_mode_exact_ca
 
 ## License
 
-Apache 2.0
+MIT
