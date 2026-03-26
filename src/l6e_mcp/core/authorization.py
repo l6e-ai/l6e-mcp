@@ -47,8 +47,11 @@ def authorize_call(
     actual_prompt_tokens: int | None,
     actual_completion_tokens: int | None,
     calibration_factor: float | None = None,
+    model_override: str | None = None,
 ) -> AuthorizationDecision:
     """Run gate check and persist a pending (or reconciled) call row."""
+    billing_model = model_override or session.model
+
     estimator = LiteLLMCostEstimator(
         fallback_cost_per_1k_tokens=session.policy.unknown_model_cost_per_1k_tokens
     )
@@ -73,7 +76,7 @@ def authorize_call(
         completion_tokens = estimated_completion_tokens or 400
 
     estimate_meta = estimator.estimate_with_metadata(
-        session.model,
+        billing_model,
         prompt_tokens,
         completion_tokens,
     )
@@ -164,7 +167,7 @@ def authorize_call(
 
     decision = gate.check(
         runtime_store,
-        model=session.model,
+        model=billing_model,
         estimated_cost=estimated_cost,
         stage=tool_name,
         complexity=None,
@@ -186,7 +189,7 @@ def authorize_call(
             model_pricing_known=estimate_meta.model_pricing_known,
         )
 
-    model_used = decision.target_model if decision.action == "reroute" else session.model
+    model_used = decision.target_model if decision.action == "reroute" else billing_model
     model_cost_meta = estimator.estimate_with_metadata(
         model_used,
         prompt_tokens,

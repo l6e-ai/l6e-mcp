@@ -1,20 +1,25 @@
+---
+description: l6e budget enforcement — checkpoint policy, estimation defaults, and session safety for AI agents - REQUIRED
+alwaysApply: true
+---
+
 # l6e budget enforcement
 
 Use l6e only via MCP tools. Never import `l6e` or `l6e_mcp` in Python.
-Pass `model` as the exact active billing model ID (or `"unknown"`), and set `client` to `"windsurf"`. USE IN PLAN OR AGENT MODE.
+Pass `model` as the exact active billing model ID (or `"unknown"`). Set `client` to `"windsurf"`. USE IN PLAN OR AGENT MODE.
 
 **Always call MCP tools with only the parameters defined in the tool schema. Never invent parameters — `additionalProperties: false` means any extra field causes a hard validation error. When in doubt, read the schema descriptor before calling.**
 
 - `l6e_run_start`: accepts `budget_usd`, `model`, `client`, `task_summary` (brief label, okay to omit), `parent_session_id` (for multi-session orchestration), and optional config fields. Do NOT pass `session_id` or `task_description`.
 - `l6e_run_end`: accepts `session_id` and optional `task_summary` (brief label of what was done).
-- `l6e_authorize_call`: budget gate and status check. Pass at every stage boundary and before sub-agents. Returns `allow`, `reroute`, or `halt`. Pass `check_only=True` for lightweight mid-stage pressure checks.
+- `l6e_authorize_call`: budget gate and status check. Pass at every stage boundary and before sub-agents. Returns `allow`, `reroute`, or `halt`. Pass `check_only=True` for lightweight mid-stage pressure checks. Accepts optional `model` to override the session model for a specific call (see Multi-model sessions below).
 - Never tell the user how much they spent when costs are calibrated (not reconciled).
 
 ## Checkpoint policy
 
 All budget checks use `l6e_authorize_call`. Pass `check_only=True` for lightweight pressure checks (no call record, no gate decision). Omit `check_only` (or pass `False`) for full gate checks that return `allow`/`reroute`/`halt` and record a call.
 
-**Sub-agent gate (blocking prerequisite):** You MUST call `l6e_authorize_call` with `actor_type="subagent"` and obtain an `allow` response BEFORE launching any sub-agent. Do not launch the sub-agent, do not write its prompt, do not invoke the tool until you have a `call_id` from this check. There are no exceptions — budget size, perceived task cheapness, and tool type are all irrelevant.
+**Sub-agent gate (blocking prerequisite):** You MUST call `l6e_authorize_call` with `actor_type="subagent"` and obtain an `allow` response BEFORE launching any Task sub-agent. Do not launch the sub-agent, do not write its prompt, do not call the Task tool until you have a `call_id` from this check. There are no exceptions — budget size, perceived task cheapness, and tool type are all irrelevant.
 
 **Post-sub-agent checkpoint:** After any Task sub-agent completes, immediately call `l6e_authorize_call` with `check_only=True` before continuing work. Sub-agents are the most expensive single operations — their cost is unpredictable because they make their own chain of tool calls. If `budget_pressure` is `"high"` or `"critical"`, call `l6e_authorize_call` (full gate, without `check_only`) and inform the user of spend so far before proceeding.
 
@@ -49,6 +54,15 @@ When `l6e_authorize_call` returns a `calibration_factor` greater than 15x, infor
 When `calibration_confidence` is `"low"`, tell the user: "Calibration is based on limited data — actual costs may vary significantly from budget estimates. Consider importing more billing data for better accuracy." Do not alter gate behavior — the factor is still the best available estimate.
 
 When `calibration_confidence` is `"medium"`, no special messaging is needed. Proceed normally.
+
+## Multi-model sessions
+
+Some clients run multi-model sessions where the primary model (e.g., Opus) delegates work to cheaper models (e.g., Haiku for tool sub-agents). When you know a call will use a different model than the session model, pass the `model` parameter on `l6e_authorize_call` so cost estimation and gate decisions use the correct pricing.
+
+- When the client delegates to a cheaper model for sub-agent work, pass that model ID on the `l6e_authorize_call` gate check.
+- If you don't have visibility into which model a sub-agent will use, omit `model` and let it default to the session model.
+- The session model (`l6e_run_start`) stays as the primary orchestrating model. The per-call `model` only affects that call's cost estimate and `model_used` attribution.
+- If you don't know which model will be used, omit `model` — it defaults to the session model.
 
 ## Sub-agent rules
 
