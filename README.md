@@ -18,18 +18,18 @@
 | src/l6e\_mcp/core/status\_telemetry.py       |       53 |        1 |     98% |        60 |
 | src/l6e\_mcp/outbox.py                       |      105 |        8 |     92% |88-89, 106-107, 135-137, 166 |
 | src/l6e\_mcp/overhead.py                     |       18 |        1 |     94% |        31 |
-| src/l6e\_mcp/server.py                       |      309 |       18 |     94% |93, 100, 103, 111, 114, 172, 187-189, 215, 434, 436, 682, 746, 792-794, 798 |
-| src/l6e\_mcp/session\_store.py               |       48 |        4 |     92% |98, 171, 174, 194 |
+| src/l6e\_mcp/server.py                       |      309 |       18 |     94% |93, 100, 103, 111, 114, 172, 187-189, 215, 435, 437, 683, 747, 793-795, 799 |
+| src/l6e\_mcp/session\_store.py               |       48 |        4 |     92% |100, 173, 176, 196 |
 | src/l6e\_mcp/store/\_\_init\_\_.py           |        0 |        0 |    100% |           |
 | src/l6e\_mcp/store/\_connection.py           |       47 |        0 |    100% |           |
-| src/l6e\_mcp/store/\_migrations.py           |       67 |        1 |     99% |        47 |
+| src/l6e\_mcp/store/\_migrations.py           |       68 |        1 |     99% |        47 |
 | src/l6e\_mcp/store/\_serialization.py        |       34 |        1 |     97% |        80 |
 | src/l6e\_mcp/store/calls.py                  |      130 |        5 |     96% |171, 240, 319, 334, 372 |
 | src/l6e\_mcp/store/diagnostics.py            |       19 |        0 |    100% |           |
 | src/l6e\_mcp/store/schema.py                 |       17 |        0 |    100% |           |
-| src/l6e\_mcp/store/sessions.py               |      107 |        3 |     97% |135, 189, 212 |
-| src/l6e\_mcp/store/summary.py                |       72 |        5 |     93% |119, 122, 124, 126, 151 |
-| **TOTAL**                                    | **1403** |   **84** | **94%** |           |
+| src/l6e\_mcp/store/sessions.py               |      108 |        3 |     97% |139, 193, 216 |
+| src/l6e\_mcp/store/summary.py                |       74 |        5 |     93% |119, 122, 124, 126, 153 |
+| **TOTAL**                                    | **1407** |   **84** | **94%** |           |
 
 
 ## Setup coverage badge
