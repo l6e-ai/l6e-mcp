@@ -7,6 +7,7 @@ All notable changes to l6e-mcp are documented here.
 - **Rewritten README for launch.** New lede, dogfooding callout, tighter quick start, free vs pro comparison table, and calibration config docs. Technical depth moved to [docs.l6e.ai](https://docs.l6e.ai).
 - **Removed reroute references from README.** The MCP protocol has no model-switch primitive — documentation now presents `allow` / `halt` as the two gate outcomes.
 - **PyPI metadata updated.** Description and documentation URL now point to [docs.l6e.ai](https://docs.l6e.ai).
+- **Fixed schema migration for upgrades from ≤0.5.2.** Columns added after the v1 migration shipped (`client`, `start_summary`, `end_summary`, `parent_session_id`, `raw_estimated_cost_usd`) were never applied to existing databases because v1 was skipped on re-run. Added a v2 migration to catch up.
 
 ## 0.6.1 — 2026-03-26
 
