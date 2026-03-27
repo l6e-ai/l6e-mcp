@@ -22,14 +22,14 @@
 | src/l6e\_mcp/session\_store.py               |       48 |        4 |     92% |100, 173, 176, 196 |
 | src/l6e\_mcp/store/\_\_init\_\_.py           |        0 |        0 |    100% |           |
 | src/l6e\_mcp/store/\_connection.py           |       47 |        0 |    100% |           |
-| src/l6e\_mcp/store/\_migrations.py           |       68 |        1 |     99% |        47 |
+| src/l6e\_mcp/store/\_migrations.py           |       77 |        1 |     99% |        47 |
 | src/l6e\_mcp/store/\_serialization.py        |       34 |        1 |     97% |        80 |
 | src/l6e\_mcp/store/calls.py                  |      130 |        5 |     96% |171, 240, 319, 334, 372 |
 | src/l6e\_mcp/store/diagnostics.py            |       19 |        0 |    100% |           |
 | src/l6e\_mcp/store/schema.py                 |       17 |        0 |    100% |           |
 | src/l6e\_mcp/store/sessions.py               |      108 |        3 |     97% |139, 193, 216 |
 | src/l6e\_mcp/store/summary.py                |       74 |        5 |     93% |119, 122, 124, 126, 153 |
-| **TOTAL**                                    | **1407** |   **84** | **94%** |           |
+| **TOTAL**                                    | **1416** |   **84** | **94%** |           |
 
 
 ## Setup coverage badge
