@@ -199,6 +199,29 @@ def _migrate_to_v1(conn: sqlite3.Connection) -> None:
     _drop_column(conn, "sessions", "advanced_fallback_enabled")
 
 
+# ---------------------------------------------------------------------------
+# Migration v2 — catch-up for columns added to the v1 function after initial
+# deployment.  Databases already at schema_version=1 never re-run v1, so any
+# _ensure_column / _drop_column appended there after go-live is invisible to
+# them.  All operations here are idempotent.
+# ---------------------------------------------------------------------------
+
+@_register(2)
+def _migrate_to_v2(conn: sqlite3.Connection) -> None:
+    # sessions columns
+    _ensure_column(conn, "sessions", "start_summary", "TEXT")
+    _ensure_column(conn, "sessions", "end_summary", "TEXT")
+    _ensure_column(conn, "sessions", "parent_session_id", "TEXT")
+    _ensure_column(conn, "sessions", "client", "TEXT")
+
+    # calls columns
+    _ensure_column(conn, "calls", "raw_estimated_cost_usd", "TEXT")
+
+    # drop stale columns
+    _drop_column(conn, "sessions", "proxy_mode")
+    _drop_column(conn, "sessions", "advanced_fallback_enabled")
+
+
 LATEST_VERSION: int = _MIGRATIONS[-1][0] if _MIGRATIONS else 0
 
 
