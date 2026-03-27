@@ -1,13 +1,14 @@
 # l6e budget enforcement
 
 Use l6e only via MCP tools. Never import `l6e` or `l6e_mcp` in Python.
-Pass `model` as the exact active billing model ID without the provider prefix (e.g. `"claude-sonnet-4-20250514"`, not `"anthropic/claude-sonnet-4-20250514"`), or `"unknown"` if unsure. Set `client` to `"openclaw"`. USE IN PLAN OR AGENT MODE.
+Pass `model` as the exact active billing model ID without the provider prefix (e.g. `"claude-sonnet-4-20250514"`, not `"anthropic/claude-sonnet-4-20250514"`), or `"unknown"` if unsure. Set `client` to `"openclaw"`.
 
 **Always call MCP tools with only the parameters defined in the tool schema. Never invent parameters — `additionalProperties: false` means any extra field causes a hard validation error. When in doubt, read the schema descriptor before calling.**
 
 - `l6e_run_start`: accepts `budget_usd`, `model`, `client`, `task_summary` (brief label, okay to omit), `parent_session_id` (for multi-session orchestration), and optional config fields. Do NOT pass `session_id` or `task_description`.
 - `l6e_run_end`: accepts `session_id` and optional `task_summary` (brief label of what was done).
 - `l6e_authorize_call`: budget gate and status check. Pass at every stage boundary and before sub-agents. Returns `allow`, `reroute`, or `halt`. Pass `check_only=True` for lightweight mid-stage pressure checks. Accepts optional `model` to override the session model for a specific call (see Multi-model sessions below).
+- `l6e_record_usage`: do NOT call unless you have real token-usage data from the client runtime. This tool is for exact accounting only.
 - Never tell the user how much they spent when costs are calibrated (not reconciled).
 
 ## Checkpoint policy
@@ -27,6 +28,8 @@ All budget checks use `l6e_authorize_call`. Pass `check_only=True` for lightweig
 - If `budget_pressure` is `"high"` or `"critical"`: call `l6e_authorize_call` (full gate) before further expensive work.
 
 **After a progress update or revised plan:** Run a full gate check before starting the new work batch.
+
+**Task completion (mandatory):** When the task is complete — or cancelled/abandoned — call `l6e_run_end` with the `session_id`. This is the only way to flush the run log. Skipping it leaves the session open and spend unrecorded.
 
 **Full gate responses (`check_only=False`):**
 - `allow`: proceed. Check the `budget_pressure` field in the response. If `"moderate"`, continue but prefer cheaper approaches (skip subagents, minimize file reads). If `"high"`, inform the user of budget pressure before continuing — they may want to increase the budget or scope down.
@@ -48,7 +51,7 @@ When `l6e_authorize_call` returns a `calibration_factor` greater than 15x, infor
 
 When `calibration_confidence` is `"low"`, tell the user: "Calibration is based on limited data — actual costs may vary significantly from budget estimates. Consider importing more billing data for better accuracy." Do not alter gate behavior — the factor is still the best available estimate.
 
-When `calibration_confidence` is `"medium"`, no special messaging is needed. Proceed normally.
+When `calibration_confidence` is `"medium"` or `"high"`, no special messaging is needed. Proceed normally.
 
 ## Multi-model sessions
 
