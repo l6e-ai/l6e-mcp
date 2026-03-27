@@ -13,6 +13,7 @@ Pass `model` as the exact active billing model ID (or `"unknown"`). Set `client`
 - `l6e_run_start`: accepts `budget_usd`, `model`, `client`, `task_summary` (brief label, okay to omit), `parent_session_id` (for multi-session orchestration), and optional config fields. Do NOT pass `session_id` or `task_description`.
 - `l6e_run_end`: accepts `session_id` and optional `task_summary` (brief label of what was done).
 - `l6e_authorize_call`: budget gate and status check. Pass at every stage boundary and before sub-agents. Returns `allow`, `reroute`, or `halt`. Pass `check_only=True` for lightweight mid-stage pressure checks. Accepts optional `model` to override the session model for a specific call (see Multi-model sessions below).
+- `l6e_record_usage`: do NOT call unless you have real token-usage data from the client runtime. This tool is for exact accounting only.
 - Never tell the user how much they spent when costs are calibrated (not reconciled).
 
 ## Checkpoint policy
@@ -32,6 +33,8 @@ All budget checks use `l6e_authorize_call`. Pass `check_only=True` for lightweig
 - If `budget_pressure` is `"high"` or `"critical"`: call `l6e_authorize_call` (full gate) before further expensive work.
 
 **After a progress update or revised plan:** Run a full gate check before starting the new work batch.
+
+**Task completion (mandatory):** When the task is complete — or cancelled/abandoned — call `l6e_run_end` with the `session_id`. This is the only way to flush the run log. Skipping it leaves the session open and spend unrecorded.
 
 **Full gate responses (`check_only=False`):**
 - `allow`: proceed. Check the `budget_pressure` field in the response. If `"moderate"`, continue but prefer cheaper approaches (skip subagents, minimize file reads). If `"high"`, inform the user of budget pressure before continuing — they may want to increase the budget or scope down.
@@ -53,14 +56,14 @@ When `l6e_authorize_call` returns a `calibration_factor` greater than 15x, infor
 
 When `calibration_confidence` is `"low"`, tell the user: "Calibration is based on limited data — actual costs may vary significantly from budget estimates. Consider importing more billing data for better accuracy." Do not alter gate behavior — the factor is still the best available estimate.
 
-When `calibration_confidence` is `"medium"`, no special messaging is needed. Proceed normally.
+When `calibration_confidence` is `"medium"` or `"high"`, no special messaging is needed. Proceed normally.
 
 ## Multi-model sessions
 
 Some clients run multi-model sessions where the primary model (e.g., Opus) delegates work to cheaper models (e.g., Haiku for tool sub-agents). When you know a call will use a different model than the session model, pass the `model` parameter on `l6e_authorize_call` so cost estimation and gate decisions use the correct pricing.
 
 - When the client delegates to a cheaper model (shown in the UI, e.g. `Haiku 4.5` next to an Explore task), pass that model ID on the authorize call before launching the sub-agent.
-- In other clients like Cursor, sub-agents may use a different model (e.g. `model: "fast"`). The same principle applies — pass the actual model ID on the gate check.
+- If you know a sub-agent will use a specific model, pass that model ID on the gate check rather than letting it default to the session model.
 - The session model (`l6e_run_start`) stays as the primary orchestrating model. The per-call `model` only affects that call's cost estimate and `model_used` attribution.
 - If you don't know which model will be used, omit `model` — it defaults to the session model.
 
