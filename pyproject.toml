@@ -1,7 +1,7 @@
 [project]
 name = "l6e-mcp"
 version = "0.6.2"
-description = "Make your AI coding agent cost-efficient. Budget enforcement for Cursor, Claude Code, and Windsurf."
+description = "Make your AI coding agent cost-efficient. Budget enforcement for Cursor, Claude Code, Openclaw, & any MCP compatible client."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICEN[CS]E*"]
