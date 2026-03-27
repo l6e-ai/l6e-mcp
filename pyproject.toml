@@ -1,7 +1,7 @@
 [project]
 name = "l6e-mcp"
-version = "0.6.1"
-description = "Session-scoped budget enforcement for Cursor, Claude Code, Windsurf, and OpenClaw."
+version = "0.6.2"
+description = "Make your AI coding agent cost-efficient. Budget enforcement for Cursor, Claude Code, Openclaw, & any MCP compatible client."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICEN[CS]E*"]
@@ -28,7 +28,7 @@ l6e-mcp = "l6e_mcp.server:main"
 [project.urls]
 Homepage = "https://github.com/l6e-ai/l6e-mcp"
 Repository = "https://github.com/l6e-ai/l6e-mcp"
-Documentation = "https://github.com/l6e-ai/l6e-mcp#readme"
+Documentation = "https://docs.l6e.ai"
 
 [build-system]
 requires = ["setuptools>=68"]
