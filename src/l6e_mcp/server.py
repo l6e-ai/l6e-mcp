@@ -14,6 +14,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Annotated, Generic, TypeVar
 
+import httpx
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 from l6e._log import LocalRunLog
@@ -787,6 +788,62 @@ async def l6e_run_end(
         "mode_coverage": mode_coverage,
         "modes_without_exact_coverage": modes_without_exact_coverage,
     }
+
+
+@mcp.tool(timeout=60)
+async def l6e_sync_anthropic_usage(
+    admin_key: Annotated[str, "Anthropic Admin API key (sk-ant-admin...)"],
+    date_start: Annotated[str, "Start date YYYY-MM-DD"],
+    date_end: Annotated[str, "End date YYYY-MM-DD"],
+    api_key_id: Annotated[str, "Optional: filter by Anthropic API key ID"] = "",
+) -> dict:
+    """Sync Anthropic usage data locally via the Admin API. The admin key stays on your machine — only normalized billing rows are sent to l6e cloud. Requires an Anthropic organization account."""  # noqa: E501
+    if not admin_key.startswith("sk-ant-admin"):
+        raise ToolError(
+            "admin_key must be an Anthropic Admin API key (starts with sk-ant-admin...). "
+            "Get one at https://platform.claude.com/settings/keys"
+        )
+    from l6e_mcp.anthropic_sync import sync_and_upload
+
+    try:
+        result = sync_and_upload(
+            admin_key=admin_key,
+            date_start=date_start,
+            date_end=date_end,
+            api_key_id=api_key_id or None,
+        )
+    except httpx.HTTPStatusError as exc:
+        status = exc.response.status_code
+        if status in (401, 403):
+            raise ToolError(
+                "The Anthropic Admin API returned a 401/403 error. This usually means:\n"
+                "1. The admin key is invalid or expired, OR\n"
+                "2. Your Anthropic account is an individual account (not an organization).\n\n"
+                "To use this sync, set up an organization at "
+                "https://console.anthropic.com → Settings → Organization.\n\n"
+                "Alternatively, export a cost CSV from the Anthropic Console and "
+                "import it via the l6e dashboard at /reconciliation."
+            ) from exc
+        raise ToolError(f"Anthropic API error (HTTP {status}): {exc.response.text[:200]}") from exc
+    except RuntimeError as exc:
+        raise ToolError(str(exc)) from exc
+
+    resp: dict = {
+        "status": "synced",
+        "buckets_fetched": result.buckets_fetched,
+        "rows_sent": result.rows_sent,
+        "total_cost_usd": float(result.total_cost_usd),
+    }
+    if result.server_response:
+        resp["server_result"] = {
+            k: result.server_response[k]
+            for k in ("status", "batch_id", "rows_inserted", "rows_deduplicated",
+                       "reconciliation", "calibration_factors_upserted", "sessions_reconciled")
+            if k in result.server_response
+        }
+    if result.warnings:
+        resp["warnings"] = result.warnings
+    return resp
 
 
 def main() -> None:
