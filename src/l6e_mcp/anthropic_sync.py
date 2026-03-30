@@ -153,7 +153,7 @@ def fetch_usage_buckets(
 
     params: dict[str, str] = {
         "bucket_width": "1m",
-        "group_by": "api_key_id,model",
+        "group_by[]": ["api_key_id", "model"],
         "starting_at": start.isoformat(),
         "ending_at": end.isoformat(),
     }

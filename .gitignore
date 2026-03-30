@@ -11,3 +11,4 @@ dist/
 .coverage
 coverage.json
 .DS_Store
+uv.lock
