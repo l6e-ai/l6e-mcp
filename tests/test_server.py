@@ -41,6 +41,7 @@ async def test_tool_discovery_exposes_canonical_names_only(client):
         "l6e_authorize_call",
         "l6e_record_usage",
         "l6e_run_end",
+        "l6e_sync_anthropic_usage",
     }
 
 
