@@ -135,7 +135,10 @@ def _request_with_retry(
             try:
                 wait = max(wait, float(retry_after))
             except ValueError:
-                pass
+                logger.warning(
+                    "Invalid retry-after header: %s. Using default retry time.",
+                    retry_after,
+                )
         logger.info(
             "Rate limited (429), retrying in %.1fs (attempt %d/%d)",
             wait, attempt + 1, _MAX_RETRIES,
@@ -451,8 +454,16 @@ def sync_and_upload(
                 "showing all keys. Use usage_report for key-level detail."
             )
     except httpx.HTTPStatusError as exc:
-        logger.warning("cost_report failed (HTTP %s), trying usage_report", exc.response.status_code)
-        warnings.append(f"cost_report unavailable (HTTP {exc.response.status_code}), fell back to usage_report.")
+        logger.warning(
+            "cost_report failed (HTTP %s). Falling back to usage_report.",
+            exc.response.status_code
+        )
+        warnings.append(
+            f"""
+            cost_report unavailable (HTTP {exc.response.status_code}). 
+            Falling back to usage_report.
+            """
+        )
         source = "usage_report"
         usage_buckets = fetch_usage_buckets(
             admin_key=admin_key, start=start, end=end, api_key_id=api_key_id,
