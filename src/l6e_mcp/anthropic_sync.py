@@ -2,7 +2,8 @@
 rows to hosted-edge.
 
 The admin key never leaves the user's machine. It is used only in the
-Authorization header of requests to the Anthropic API.
+Authorization header of requests to the Anthropic API. Users should prefer a
+short-lived key and revoke it in Anthropic after a successful import.
 
 Uses cost_report (actual dollar amounts) as primary source, with
 usage_report/messages (token counts) as fallback. The cost_report endpoint
