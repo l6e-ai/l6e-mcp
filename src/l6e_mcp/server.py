@@ -792,12 +792,15 @@ async def l6e_run_end(
 
 @mcp.tool(timeout=60)
 async def l6e_sync_anthropic_usage(
-    admin_key: Annotated[str, "Anthropic Admin API key (sk-ant-admin...)"],
+    admin_key: Annotated[
+        str,
+        "Anthropic Admin API key (sk-ant-admin...). Prefer a short-lived key: create for import, revoke in Anthropic after sync.",  # noqa: E501 — Annotated string is the MCP parameter description shown verbatim to agents; keep one line for schema / AI tooling
+    ],
     date_start: Annotated[str, "Start date YYYY-MM-DD"],
     date_end: Annotated[str, "End date YYYY-MM-DD"],
     api_key_id: Annotated[str, "Optional: filter by Anthropic API key ID"] = "",
 ) -> dict:
-    """Sync Anthropic usage data locally via the Admin API. The admin key stays on your machine — only normalized billing rows are sent to l6e cloud. Requires an Anthropic organization account."""  # noqa: E501
+    """Sync Anthropic usage data locally via the Admin API. The admin key stays on your machine — only normalized billing rows are sent to l6e cloud. Requires an Anthropic organization account. Best practice: create a dedicated Admin key, run sync, then delete (revoke) the key in Anthropic; pasted keys may remain in assistant chat history."""  # noqa: E501
     if not admin_key.startswith("sk-ant-admin"):
         raise ToolError(
             "admin_key must be an Anthropic Admin API key (starts with sk-ant-admin...). "
@@ -814,7 +817,8 @@ async def l6e_sync_anthropic_usage(
         )
     except httpx.HTTPStatusError as exc:
         status = exc.response.status_code
-        if status in (401, 403):
+        is_anthropic = "api.anthropic.com" in str(exc.request.url)
+        if is_anthropic and status in (401, 403):
             raise ToolError(
                 "The Anthropic Admin API returned a 401/403 error. This usually means:\n"
                 "1. The admin key is invalid or expired, OR\n"
@@ -824,12 +828,14 @@ async def l6e_sync_anthropic_usage(
                 "Alternatively, export a cost CSV from the Anthropic Console and "
                 "import it via the l6e dashboard at /reconciliation."
             ) from exc
-        raise ToolError(f"Anthropic API error (HTTP {status}): {exc.response.text[:200]}") from exc
+        origin = "Anthropic API" if is_anthropic else "l6e cloud"
+        raise ToolError(f"{origin} error (HTTP {status}): {exc.response.text[:200]}") from exc
     except RuntimeError as exc:
         raise ToolError(str(exc)) from exc
 
     resp: dict = {
         "status": "synced",
+        "source": result.source,
         "buckets_fetched": result.buckets_fetched,
         "rows_sent": result.rows_sent,
         "total_cost_usd": float(result.total_cost_usd),

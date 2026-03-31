@@ -10,9 +10,9 @@ import pytest
 from l6e_mcp.anthropic_sync import (
     _TOKEN_PRICING,
     UsageBucket,
-    _buckets_to_row_dicts,
     _compute_cost,
     _resolve_pricing,
+    _usage_buckets_to_row_dicts,
     fetch_usage_buckets,
     sync_and_upload,
 )
@@ -72,7 +72,7 @@ class TestResolvePricing:
 
 
 # ---------------------------------------------------------------------------
-# _buckets_to_row_dicts
+# _usage_buckets_to_row_dicts
 # ---------------------------------------------------------------------------
 
 def _make_bucket(**kwargs) -> UsageBucket:
@@ -93,7 +93,7 @@ def _make_bucket(**kwargs) -> UsageBucket:
 
 class TestBucketsToRowDicts:
     def test_basic_conversion(self):
-        rows = _buckets_to_row_dicts([_make_bucket()])
+        rows = _usage_buckets_to_row_dicts([_make_bucket()])
         assert len(rows) == 1
         row = rows[0]
         assert row["provider"] == "anthropic"
@@ -106,7 +106,7 @@ class TestBucketsToRowDicts:
         assert Decimal(row["cost_usd"]) > Decimal("0")
 
     def test_zero_token_bucket_skipped(self):
-        rows = _buckets_to_row_dicts([_make_bucket(
+        rows = _usage_buckets_to_row_dicts([_make_bucket(
             input_tokens=0, output_tokens=0,
             cache_read_tokens=0, cache_creation_tokens=0,
         )])
@@ -114,12 +114,12 @@ class TestBucketsToRowDicts:
 
     def test_fingerprint_is_deterministic(self):
         b = _make_bucket()
-        rows1 = _buckets_to_row_dicts([b])
-        rows2 = _buckets_to_row_dicts([b])
+        rows1 = _usage_buckets_to_row_dicts([b])
+        rows2 = _usage_buckets_to_row_dicts([b])
         assert rows1[0]["content_fingerprint"] == rows2[0]["content_fingerprint"]
 
     def test_multiple_buckets(self):
-        rows = _buckets_to_row_dicts([
+        rows = _usage_buckets_to_row_dicts([
             _make_bucket(model="claude-sonnet-4-6"),
             _make_bucket(
                 model="claude-opus-4-0",
@@ -141,18 +141,22 @@ class TestFetchUsageBuckets:
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
-            "results": [
+            "data": [
                 {
                     "starting_at": "2026-03-26T10:00:00+00:00",
                     "ending_at": "2026-03-26T10:01:00+00:00",
-                    "model": "claude-sonnet-4-6",
-                    "api_key_id": "key_abc",
-                    "workspace_id": None,
-                    "uncached_input_tokens": 500,
-                    "output_tokens": 200,
-                    "cache_read_input_tokens": 100,
-                    "cache_creation_input_tokens": 50,
-                }
+                    "results": [
+                        {
+                            "model": "claude-sonnet-4-6",
+                            "api_key_id": "key_abc",
+                            "workspace_id": None,
+                            "uncached_input_tokens": 500,
+                            "output_tokens": 200,
+                            "cache_read_input_tokens": 100,
+                            "cache_creation_input_tokens": 50,
+                        },
+                    ],
+                },
             ],
             "has_more": False,
         }
@@ -178,12 +182,14 @@ class TestFetchUsageBuckets:
         page1 = MagicMock()
         page1.status_code = 200
         page1.json.return_value = {
-            "results": [{
+            "data": [{
                 "starting_at": "2026-03-26T10:00:00+00:00",
                 "ending_at": "2026-03-26T10:01:00+00:00",
-                "model": "claude-sonnet-4-6",
-                "uncached_input_tokens": 100, "output_tokens": 50,
-                "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0,
+                "results": [{
+                    "model": "claude-sonnet-4-6",
+                    "uncached_input_tokens": 100, "output_tokens": 50,
+                    "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0,
+                }],
             }],
             "has_more": True,
             "next_page": "page2token",
@@ -193,12 +199,14 @@ class TestFetchUsageBuckets:
         page2 = MagicMock()
         page2.status_code = 200
         page2.json.return_value = {
-            "results": [{
+            "data": [{
                 "starting_at": "2026-03-26T10:01:00+00:00",
                 "ending_at": "2026-03-26T10:02:00+00:00",
-                "model": "claude-sonnet-4-6",
-                "uncached_input_tokens": 200, "output_tokens": 100,
-                "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0,
+                "results": [{
+                    "model": "claude-sonnet-4-6",
+                    "uncached_input_tokens": 200, "output_tokens": 100,
+                    "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0,
+                }],
             }],
             "has_more": False,
         }
@@ -226,20 +234,21 @@ class TestFetchUsageBuckets:
 # ---------------------------------------------------------------------------
 
 class TestSyncAndUpload:
-    def _mock_anthropic_response(self):
+    def _mock_cost_report_response(self):
+        """cost_report body: data[] time buckets, each with results[] (amount in cents)."""
         resp = MagicMock()
         resp.json.return_value = {
-            "results": [
+            "data": [
                 {
-                    "starting_at": "2026-03-26T10:00:00+00:00",
-                    "ending_at": "2026-03-26T10:01:00+00:00",
-                    "model": "claude-sonnet-4-6",
-                    "api_key_id": "key_abc",
-                    "workspace_id": None,
-                    "uncached_input_tokens": 1000,
-                    "output_tokens": 500,
-                    "cache_read_input_tokens": 0,
-                    "cache_creation_input_tokens": 0,
+                    "starting_at": "2026-03-26T00:00:00+00:00",
+                    "ending_at": "2026-03-27T00:00:00+00:00",
+                    "results": [
+                        {
+                            "amount": "100",
+                            "model": "claude-sonnet-4-6",
+                            "workspace_id": None,
+                        },
+                    ],
                 },
             ],
             "has_more": False,
@@ -264,7 +273,7 @@ class TestSyncAndUpload:
         mock_config.get_api_key.return_value = "sk-l6e-test"
         mock_config.get_cloud_endpoint.return_value = "https://api.l6e.ai"
 
-        anthropic_resp = self._mock_anthropic_response()
+        anthropic_resp = self._mock_cost_report_response()
         edge_resp = self._mock_edge_response()
 
         with patch("l6e_mcp.anthropic_sync.httpx.Client") as MockClient, \
@@ -281,8 +290,9 @@ class TestSyncAndUpload:
 
         assert result.buckets_fetched == 1
         assert result.rows_sent == 1
-        assert result.total_cost_usd > Decimal("0")
+        assert result.total_cost_usd == Decimal("1")
         assert result.server_response["status"] == "accepted"
+        assert result.source == "cost_report"
         assert not result.warnings
 
     @patch("l6e_mcp.anthropic_sync._config")
@@ -291,7 +301,7 @@ class TestSyncAndUpload:
         mock_config.get_cloud_endpoint.return_value = "https://api.l6e.ai"
 
         empty_resp = MagicMock()
-        empty_resp.json.return_value = {"results": [], "has_more": False}
+        empty_resp.json.return_value = {"data": [], "has_more": False}
         empty_resp.raise_for_status = MagicMock()
 
         with patch("l6e_mcp.anthropic_sync.httpx.Client") as MockClient:
@@ -307,7 +317,7 @@ class TestSyncAndUpload:
 
         assert result.buckets_fetched == 0
         assert result.rows_sent == 0
-        assert any("No usage data" in w for w in result.warnings)
+        assert any("No billing data returned from Anthropic" in w for w in result.warnings)
 
     def test_missing_api_key_raises(self):
         with patch("l6e_mcp.anthropic_sync._config") as mock_config:
