@@ -794,7 +794,7 @@ async def l6e_run_end(
 async def l6e_sync_anthropic_usage(
     admin_key: Annotated[
         str,
-        "Anthropic Admin API key (sk-ant-admin...). Prefer a short-lived key: create for import, revoke in Anthropic after sync.",
+        "Anthropic Admin API key (sk-ant-admin...). Prefer a short-lived key: create for import, revoke in Anthropic after sync.",  # noqa: E501 — Annotated string is the MCP parameter description shown verbatim to agents; keep one line for schema / AI tooling
     ],
     date_start: Annotated[str, "Start date YYYY-MM-DD"],
     date_end: Annotated[str, "End date YYYY-MM-DD"],
