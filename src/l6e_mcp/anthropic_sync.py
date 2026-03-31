@@ -1,14 +1,21 @@
-"""Anthropic Admin API sync — fetches usage data locally and POSTs normalized
-billing rows to hosted-edge.
+"""Anthropic Admin API sync — fetches billing data locally and POSTs normalized
+rows to hosted-edge.
 
 The admin key never leaves the user's machine. It is used only in the
 Authorization header of requests to the Anthropic API.
+
+Uses cost_report (actual dollar amounts) as primary source, with
+usage_report/messages (token counts) as fallback. The cost_report endpoint
+is more reliable — the usage_report endpoint has a known rate-limiter bug
+(github.com/anthropics/claude-code/issues/31637).
 """
 from __future__ import annotations
 
 import hashlib
 import logging
-from dataclasses import dataclass
+import time
+from collections import defaultdict
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -20,9 +27,13 @@ from l6e_mcp import config as _config
 logger = logging.getLogger(__name__)
 
 _BASE_URL = "https://api.anthropic.com/v1/organizations"
+_COST_ENDPOINT = f"{_BASE_URL}/cost_report"
 _USAGE_ENDPOINT = f"{_BASE_URL}/usage_report/messages"
 _ANTHROPIC_TIMEOUT = 30.0
 _HOSTED_EDGE_TIMEOUT = 15.0
+_MAX_RETRIES = 4
+_RETRY_BASE_SECONDS = 2.0
+_CENTS_PER_DOLLAR = Decimal("100")
 
 _TOKEN_PRICING: dict[str, dict[str, Decimal]] = {
     "claude-opus-4-0": {
@@ -62,6 +73,16 @@ _FALLBACK_PRICING = _TOKEN_PRICING["claude-sonnet-4-6"]
 
 
 @dataclass(frozen=True)
+class CostRow:
+    """One model's aggregated cost for a single day from cost_report."""
+    starting_at: datetime
+    ending_at: datetime
+    model: str
+    workspace_id: str | None
+    cost_usd: Decimal
+
+
+@dataclass(frozen=True)
 class UsageBucket:
     starting_at: datetime
     ending_at: datetime
@@ -74,14 +95,158 @@ class UsageBucket:
     cache_creation_tokens: int
 
 
-@dataclass(frozen=True)
+@dataclass
 class SyncResult:
     buckets_fetched: int
     rows_sent: int
     total_cost_usd: Decimal
     server_response: dict[str, Any]
-    warnings: list[str]
+    warnings: list[str] = field(default_factory=list)
+    source: str = "cost_report"
 
+
+# ---------------------------------------------------------------------------
+# HTTP helpers
+# ---------------------------------------------------------------------------
+
+def _make_headers(admin_key: str) -> dict[str, str]:
+    return {
+        "x-api-key": admin_key,
+        "anthropic-version": "2023-06-01",
+        "User-Agent": "l6e-billing-sync/1.0",
+    }
+
+
+def _request_with_retry(
+    client: httpx.Client,
+    url: str,
+    *,
+    headers: dict[str, str],
+    params: dict[str, Any],
+) -> httpx.Response:
+    for attempt in range(_MAX_RETRIES + 1):
+        resp = client.get(url, headers=headers, params=params)
+        if resp.status_code != 429 or attempt == _MAX_RETRIES:
+            resp.raise_for_status()
+            return resp
+        wait = _RETRY_BASE_SECONDS * (2 ** attempt)
+        retry_after = resp.headers.get("retry-after")
+        if retry_after:
+            try:
+                wait = max(wait, float(retry_after))
+            except ValueError:
+                pass
+        logger.info(
+            "Rate limited (429), retrying in %.1fs (attempt %d/%d)",
+            wait, attempt + 1, _MAX_RETRIES,
+        )
+        time.sleep(wait)
+    return resp  # unreachable, keeps type checkers happy
+
+
+# ---------------------------------------------------------------------------
+# cost_report — primary source (actual dollar amounts from Anthropic billing)
+# ---------------------------------------------------------------------------
+
+def fetch_cost_rows(
+    *,
+    admin_key: str,
+    start: datetime,
+    end: datetime,
+) -> list[CostRow]:
+    """Fetch daily cost data from the Anthropic cost_report endpoint.
+
+    Returns one CostRow per model per workspace per day, with actual dollar
+    amounts from Anthropic's billing system.
+    """
+    headers = _make_headers(admin_key)
+    params: dict[str, Any] = {
+        "starting_at": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "ending_at": end.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "bucket_width": "1d",
+        "group_by[]": ["description", "workspace_id"],
+    }
+
+    # Aggregate by (day, model, workspace) since the API returns separate rows
+    # per token_type (input, output, cache_read, cache_creation).
+    AggKey = tuple[str, str, str, str | None]  # (start, end, model, workspace)
+    agg: dict[AggKey, Decimal] = defaultdict(Decimal)
+    pages = 0
+
+    with httpx.Client(timeout=_ANTHROPIC_TIMEOUT) as client:
+        page_token: str | None = None
+        while True:
+            if page_token:
+                params["page"] = page_token
+
+            resp = _request_with_retry(client, _COST_ENDPOINT, headers=headers, params=params)
+            body = resp.json()
+            pages += 1
+
+            for bucket in body.get("data", []):
+                ts_start = bucket["starting_at"]
+                ts_end = bucket["ending_at"]
+                for result in bucket.get("results", []):
+                    amount = Decimal(str(result.get("amount", "0")))
+                    if amount == 0:
+                        continue
+                    model = result.get("model") or "unknown"
+                    ws = result.get("workspace_id")
+                    key: AggKey = (ts_start, ts_end, model, ws)
+                    agg[key] += amount
+
+            if not body.get("has_more"):
+                break
+            page_token = body.get("next_page")
+            if not page_token:
+                break
+
+    logger.info("Fetched %d cost pages, %d model-day aggregates", pages, len(agg))
+
+    rows: list[CostRow] = []
+    for (ts_start, ts_end, model, ws), total_cents in agg.items():
+        rows.append(CostRow(
+            starting_at=datetime.fromisoformat(ts_start),
+            ending_at=datetime.fromisoformat(ts_end),
+            model=model,
+            workspace_id=ws,
+            cost_usd=(total_cents / _CENTS_PER_DOLLAR).quantize(Decimal("0.000001")),
+        ))
+    return rows
+
+
+def _cost_fingerprint(row: CostRow) -> str:
+    parts = "|".join([
+        "anthropic",
+        "cost_report",
+        row.model,
+        str(row.cost_usd),
+        row.starting_at.isoformat(),
+        row.ending_at.isoformat(),
+        row.workspace_id or "__null__",
+    ])
+    return hashlib.sha256(parts.encode("utf-8")).hexdigest()
+
+
+def _cost_rows_to_row_dicts(rows: list[CostRow]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        out.append({
+            "provider": "anthropic",
+            "model_used": r.model,
+            "cost_usd": str(r.cost_usd),
+            "billing_kind": "api_usage",
+            "workspace_id": r.workspace_id,
+            "started_at": r.starting_at.timestamp(),
+            "finished_at": r.ending_at.timestamp(),
+            "content_fingerprint": _cost_fingerprint(r),
+        })
+    return out
+
+
+# ---------------------------------------------------------------------------
+# usage_report/messages — fallback (token counts, self-computed cost)
+# ---------------------------------------------------------------------------
 
 def _resolve_pricing(model: str) -> dict[str, Decimal]:
     normalized = model.lower().strip()
@@ -114,7 +279,88 @@ def _compute_cost(
     return cost.quantize(Decimal("0.00000001"))
 
 
-def _bucket_fingerprint(b: UsageBucket, cost: Decimal) -> str:
+def _choose_bucket_width(start: datetime, end: datetime) -> str:
+    span_hours = (end - start).total_seconds() / 3600
+    if span_hours <= 2:
+        return "1m"
+    if span_hours <= 168:
+        return "1h"
+    return "1d"
+
+
+def fetch_usage_buckets(
+    *,
+    admin_key: str,
+    start: datetime,
+    end: datetime,
+    api_key_id: str | None = None,
+) -> list[UsageBucket]:
+    """Fetch usage buckets from the Anthropic usage_report/messages endpoint.
+
+    Bucket width adapts to the date range. Retries on 429 with exponential
+    backoff. The admin_key is used only in the Authorization header.
+    """
+    buckets: list[UsageBucket] = []
+    bucket_width = _choose_bucket_width(start, end)
+    headers = _make_headers(admin_key)
+
+    params: dict[str, Any] = {
+        "bucket_width": bucket_width,
+        "group_by[]": ["api_key_id", "model"],
+        "starting_at": start.isoformat(),
+        "ending_at": end.isoformat(),
+    }
+    if api_key_id:
+        params["api_key_ids[]"] = [api_key_id]
+
+    with httpx.Client(timeout=_ANTHROPIC_TIMEOUT) as client:
+        page_token: str | None = None
+        while True:
+            if page_token:
+                params["page"] = page_token
+
+            resp = _request_with_retry(client, _USAGE_ENDPOINT, headers=headers, params=params)
+            body = resp.json()
+
+            for time_bucket in body.get("data", []):
+                ts_start = datetime.fromisoformat(time_bucket["starting_at"])
+                ts_end = datetime.fromisoformat(time_bucket["ending_at"])
+                for result in time_bucket.get("results", []):
+                    buckets.append(_parse_usage_result(result, ts_start, ts_end))
+
+            if not body.get("has_more"):
+                break
+            page_token = body.get("next_page")
+            if not page_token:
+                break
+
+    return buckets
+
+
+def _parse_usage_result(
+    result: dict[str, Any],
+    bucket_start: datetime,
+    bucket_end: datetime,
+) -> UsageBucket:
+    cache_creation = result.get("cache_creation") or {}
+    cache_creation_tokens = (
+        int(cache_creation.get("ephemeral_5m_input_tokens", 0))
+        + int(cache_creation.get("ephemeral_1h_input_tokens", 0))
+    )
+    return UsageBucket(
+        starting_at=bucket_start,
+        ending_at=bucket_end,
+        model=result.get("model") or "unknown",
+        api_key_id=result.get("api_key_id"),
+        workspace_id=result.get("workspace_id"),
+        input_tokens=int(result.get("uncached_input_tokens", 0)),
+        output_tokens=int(result.get("output_tokens", 0)),
+        cache_read_tokens=int(result.get("cache_read_input_tokens", 0)),
+        cache_creation_tokens=cache_creation_tokens,
+    )
+
+
+def _usage_fingerprint(b: UsageBucket, cost: Decimal) -> str:
     parts = "|".join([
         "anthropic",
         b.model,
@@ -131,76 +377,11 @@ def _bucket_fingerprint(b: UsageBucket, cost: Decimal) -> str:
     return hashlib.sha256(parts.encode("utf-8")).hexdigest()
 
 
-def fetch_usage_buckets(
-    *,
-    admin_key: str,
-    start: datetime,
-    end: datetime,
-    api_key_id: str | None = None,
-) -> list[UsageBucket]:
-    """Fetch 1-minute usage buckets from the Anthropic Admin API.
-
-    Runs locally — the admin_key is used only in the Authorization header.
-    """
-    buckets: list[UsageBucket] = []
-    page_token: str | None = None
-
-    headers = {
-        "x-api-key": admin_key,
-        "anthropic-version": "2023-06-01",
-        "User-Agent": "l6e-billing-sync/1.0",
-    }
-
-    params: dict[str, str] = {
-        "bucket_width": "1m",
-        "group_by[]": ["api_key_id", "model"],
-        "starting_at": start.isoformat(),
-        "ending_at": end.isoformat(),
-    }
-    if api_key_id:
-        params["api_key_ids"] = api_key_id
-
-    with httpx.Client(timeout=_ANTHROPIC_TIMEOUT) as client:
-        while True:
-            if page_token:
-                params["page"] = page_token
-
-            resp = client.get(_USAGE_ENDPOINT, headers=headers, params=params)
-            resp.raise_for_status()
-            data = resp.json()
-
-            for item in data.get("results", []):
-                buckets.append(_parse_bucket(item))
-
-            if not data.get("has_more"):
-                break
-            page_token = data.get("next_page")
-            if not page_token:
-                break
-
-    return buckets
-
-
-def _parse_bucket(item: dict[str, Any]) -> UsageBucket:
-    return UsageBucket(
-        starting_at=datetime.fromisoformat(item["starting_at"]),
-        ending_at=datetime.fromisoformat(item["ending_at"]),
-        model=item.get("model", "unknown"),
-        api_key_id=item.get("api_key_id"),
-        workspace_id=item.get("workspace_id"),
-        input_tokens=int(item.get("uncached_input_tokens", 0)),
-        output_tokens=int(item.get("output_tokens", 0)),
-        cache_read_tokens=int(item.get("cache_read_input_tokens", 0)),
-        cache_creation_tokens=int(item.get("cache_creation_input_tokens", 0)),
-    )
-
-
-def _buckets_to_row_dicts(buckets: list[UsageBucket]) -> list[dict[str, Any]]:
-    """Convert usage buckets to JSON-serializable row dicts for the import-rows endpoint."""
+def _usage_buckets_to_row_dicts(buckets: list[UsageBucket]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for b in buckets:
         if b.input_tokens == 0 and b.output_tokens == 0 and b.cache_read_tokens == 0 \
-            and b.cache_creation_tokens == 0:
+                and b.cache_creation_tokens == 0:
             continue
 
         cost = _compute_cost(
@@ -221,10 +402,14 @@ def _buckets_to_row_dicts(buckets: list[UsageBucket]) -> list[dict[str, Any]]:
             "user_id": b.api_key_id,
             "started_at": b.starting_at.timestamp(),
             "finished_at": b.ending_at.timestamp(),
-            "content_fingerprint": _bucket_fingerprint(b, cost),
+            "content_fingerprint": _usage_fingerprint(b, cost),
         })
     return rows
 
+
+# ---------------------------------------------------------------------------
+# Orchestrator — tries cost_report first, falls back to usage_report
+# ---------------------------------------------------------------------------
 
 def sync_and_upload(
     *,
@@ -233,10 +418,11 @@ def sync_and_upload(
     date_end: str,
     api_key_id: str | None = None,
 ) -> SyncResult:
-    """Fetch usage from Anthropic, normalize, and POST to hosted-edge.
+    """Fetch billing data from Anthropic, normalize, and POST to hosted-edge.
 
-    The admin_key is used only for the Anthropic API requests and is never
-    sent to hosted-edge.
+    Tries cost_report first (actual dollar amounts, more reliable). Falls
+    back to usage_report/messages if cost_report fails. The admin_key is
+    used only for Anthropic API requests and is never sent to hosted-edge.
     """
     api_key = _config.get_api_key()
     if not api_key:
@@ -249,38 +435,55 @@ def sync_and_upload(
     start = datetime.strptime(date_start, "%Y-%m-%d").replace(tzinfo=UTC)
     end = datetime.strptime(date_end, "%Y-%m-%d").replace(tzinfo=UTC)
 
-    buckets = fetch_usage_buckets(
-        admin_key=admin_key,
-        start=start,
-        end=end,
-        api_key_id=api_key_id,
-    )
+    warnings: list[str] = []
+    row_dicts: list[dict[str, Any]] = []
+    source = "cost_report"
+    buckets_fetched = 0
 
-    row_dicts = _buckets_to_row_dicts(buckets)
+    # Primary: cost_report (actual Anthropic billing amounts)
+    try:
+        cost_rows = fetch_cost_rows(admin_key=admin_key, start=start, end=end)
+        buckets_fetched = len(cost_rows)
+        row_dicts = _cost_rows_to_row_dicts(cost_rows)
+        if api_key_id:
+            warnings.append(
+                "cost_report does not support api_key filtering; "
+                "showing all keys. Use usage_report for key-level detail."
+            )
+    except httpx.HTTPStatusError as exc:
+        logger.warning("cost_report failed (HTTP %s), trying usage_report", exc.response.status_code)
+        warnings.append(f"cost_report unavailable (HTTP {exc.response.status_code}), fell back to usage_report.")
+        source = "usage_report"
+        usage_buckets = fetch_usage_buckets(
+            admin_key=admin_key, start=start, end=end, api_key_id=api_key_id,
+        )
+        buckets_fetched = len(usage_buckets)
+        row_dicts = _usage_buckets_to_row_dicts(usage_buckets)
+
     total_cost = sum((Decimal(r["cost_usd"]) for r in row_dicts), Decimal("0"))
 
-    warnings: list[str] = []
-    if not buckets:
-        warnings.append("No usage data returned from Anthropic for the requested date range.")
+    if buckets_fetched == 0:
+        warnings.append("No billing data returned from Anthropic for the requested date range.")
 
     if not row_dicts:
         return SyncResult(
-            buckets_fetched=len(buckets),
+            buckets_fetched=buckets_fetched,
             rows_sent=0,
             total_cost_usd=total_cost,
             server_response={},
             warnings=warnings,
+            source=source,
         )
 
     payload = {
         "source": "anthropic_api",
         "rows": row_dicts,
         "metadata": {
-            "sync_type": "anthropic_admin_api",
+            "sync_type": f"anthropic_admin_api_{source}",
             "date_start": date_start,
             "date_end": date_end,
             "api_key_filter": api_key_id,
-            "buckets_fetched": len(buckets),
+            "buckets_fetched": buckets_fetched,
         },
     }
 
@@ -295,9 +498,10 @@ def sync_and_upload(
     server_response = resp.json()
 
     return SyncResult(
-        buckets_fetched=len(buckets),
+        buckets_fetched=buckets_fetched,
         rows_sent=len(row_dicts),
         total_cost_usd=total_cost,
         server_response=server_response,
         warnings=warnings,
+        source=source,
     )

@@ -814,7 +814,8 @@ async def l6e_sync_anthropic_usage(
         )
     except httpx.HTTPStatusError as exc:
         status = exc.response.status_code
-        if status in (401, 403):
+        is_anthropic = "api.anthropic.com" in str(exc.request.url)
+        if is_anthropic and status in (401, 403):
             raise ToolError(
                 "The Anthropic Admin API returned a 401/403 error. This usually means:\n"
                 "1. The admin key is invalid or expired, OR\n"
@@ -824,12 +825,14 @@ async def l6e_sync_anthropic_usage(
                 "Alternatively, export a cost CSV from the Anthropic Console and "
                 "import it via the l6e dashboard at /reconciliation."
             ) from exc
-        raise ToolError(f"Anthropic API error (HTTP {status}): {exc.response.text[:200]}") from exc
+        origin = "Anthropic API" if is_anthropic else "l6e cloud"
+        raise ToolError(f"{origin} error (HTTP {status}): {exc.response.text[:200]}") from exc
     except RuntimeError as exc:
         raise ToolError(str(exc)) from exc
 
     resp: dict = {
         "status": "synced",
+        "source": result.source,
         "buckets_fetched": result.buckets_fetched,
         "rows_sent": result.rows_sent,
         "total_cost_usd": float(result.total_cost_usd),
