@@ -5,14 +5,18 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 
 from l6e_mcp.anthropic_sync import (
     _TOKEN_PRICING,
+    ClaudeCodeRecord,
     UsageBucket,
+    _claude_code_records_to_row_dicts,
     _compute_cost,
     _resolve_pricing,
     _usage_buckets_to_row_dicts,
+    fetch_claude_code_records,
     fetch_usage_buckets,
     sync_and_upload,
 )
@@ -286,13 +290,14 @@ class TestSyncAndUpload:
                 admin_key="sk-ant-admin-test",
                 date_start="2026-03-26",
                 date_end="2026-03-27",
+                include_claude_code=False,
             )
 
         assert result.buckets_fetched == 1
         assert result.rows_sent == 1
         assert result.total_cost_usd == Decimal("1")
         assert result.server_response["status"] == "accepted"
-        assert result.source == "cost_report"
+        assert "cost_report" in result.source
         assert not result.warnings
 
     @patch("l6e_mcp.anthropic_sync._config")
@@ -313,6 +318,7 @@ class TestSyncAndUpload:
                 admin_key="sk-ant-admin-test",
                 date_start="2026-03-26",
                 date_end="2026-03-27",
+                include_claude_code=False,
             )
 
         assert result.buckets_fetched == 0
@@ -328,3 +334,325 @@ class TestSyncAndUpload:
                     date_start="2026-03-26",
                     date_end="2026-03-27",
                 )
+
+
+# ---------------------------------------------------------------------------
+# Claude Code: _claude_code_records_to_row_dicts
+# ---------------------------------------------------------------------------
+
+def _make_cc_record(**kwargs) -> ClaudeCodeRecord:
+    defaults = dict(
+        date=datetime(2026, 3, 26, tzinfo=UTC),
+        user_id="dev@company.com",
+        actor_type="user_actor",
+        terminal_type="vscode",
+        customer_type="api",
+        model="claude-sonnet-4-6",
+        input_tokens=100_000,
+        output_tokens=35_000,
+        cache_read_tokens=10_000,
+        cache_creation_tokens=5_000,
+        cost_cents=1025,
+    )
+    defaults.update(kwargs)
+    return ClaudeCodeRecord(**defaults)
+
+
+class TestClaudeCodeRecordsToRowDicts:
+    def test_basic_conversion(self):
+        rows = _claude_code_records_to_row_dicts([_make_cc_record()])
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["provider"] == "anthropic"
+        assert row["model_used"] == "claude-sonnet-4-6"
+        assert row["billing_kind"] == "claude_code"
+        assert row["user_id"] == "dev@company.com"
+        assert row["cost_usd"] == "10.250000"
+        assert row["input_tokens"] == 115_000  # 100k + 10k + 5k
+        assert row["output_tokens"] == 35_000
+        assert row["terminal_type"] == "vscode"
+        assert row["customer_type"] == "api"
+        assert row["actor_type"] == "user_actor"
+
+    def test_zero_cost_and_tokens_skipped(self):
+        rows = _claude_code_records_to_row_dicts([_make_cc_record(
+            cost_cents=0, input_tokens=0, output_tokens=0,
+            cache_read_tokens=0, cache_creation_tokens=0,
+        )])
+        assert len(rows) == 0
+
+    def test_zero_cost_nonzero_tokens_kept(self):
+        rows = _claude_code_records_to_row_dicts([_make_cc_record(
+            cost_cents=0, input_tokens=100, output_tokens=50,
+        )])
+        assert len(rows) == 1
+
+    def test_fingerprint_is_deterministic(self):
+        r = _make_cc_record()
+        rows1 = _claude_code_records_to_row_dicts([r])
+        rows2 = _claude_code_records_to_row_dicts([r])
+        assert rows1[0]["content_fingerprint"] == rows2[0]["content_fingerprint"]
+
+    def test_different_users_different_fingerprints(self):
+        r1 = _make_cc_record(user_id="alice@co.com")
+        r2 = _make_cc_record(user_id="bob@co.com")
+        rows = _claude_code_records_to_row_dicts([r1, r2])
+        assert rows[0]["content_fingerprint"] != rows[1]["content_fingerprint"]
+
+    def test_multiple_models(self):
+        rows = _claude_code_records_to_row_dicts([
+            _make_cc_record(model="claude-sonnet-4-6"),
+            _make_cc_record(model="claude-opus-4-6", cost_cents=5000),
+        ])
+        assert len(rows) == 2
+        models = {r["model_used"] for r in rows}
+        assert models == {"claude-sonnet-4-6", "claude-opus-4-6"}
+
+
+# ---------------------------------------------------------------------------
+# Claude Code: fetch_claude_code_records (mocked HTTP)
+# ---------------------------------------------------------------------------
+
+def _mock_claude_code_api_response(*, has_more=False, next_page=None):
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {
+        "data": [
+            {
+                "date": "2026-03-26T00:00:00Z",
+                "actor": {
+                    "type": "user_actor",
+                    "email_address": "dev@company.com",
+                },
+                "organization_id": "org-123",
+                "customer_type": "api",
+                "terminal_type": "vscode",
+                "core_metrics": {
+                    "num_sessions": 5,
+                    "lines_of_code": {"added": 1543, "removed": 892},
+                    "commits_by_claude_code": 12,
+                    "pull_requests_by_claude_code": 2,
+                },
+                "tool_actions": {
+                    "edit_tool": {"accepted": 45, "rejected": 5},
+                },
+                "model_breakdown": [
+                    {
+                        "model": "claude-sonnet-4-6",
+                        "tokens": {
+                            "input": 100000,
+                            "output": 35000,
+                            "cache_read": 10000,
+                            "cache_creation": 5000,
+                        },
+                        "estimated_cost": {"currency": "USD", "amount": 1025},
+                    },
+                ],
+            },
+        ],
+        "has_more": has_more,
+        "next_page": next_page,
+    }
+    resp.raise_for_status = MagicMock()
+    return resp
+
+
+class TestFetchClaudeCodeRecords:
+    def test_single_day_single_page(self):
+        mock_resp = _mock_claude_code_api_response()
+
+        with patch("l6e_mcp.anthropic_sync.httpx.Client") as MockClient:
+            MockClient.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            MockClient.return_value.__enter__.return_value.get.return_value = mock_resp
+            MockClient.return_value.__exit__ = MagicMock(return_value=False)
+
+            records = fetch_claude_code_records(
+                admin_key="sk-ant-admin-test",
+                start=datetime(2026, 3, 26, tzinfo=UTC),
+                end=datetime(2026, 3, 27, tzinfo=UTC),
+            )
+
+        assert len(records) == 1
+        assert records[0].user_id == "dev@company.com"
+        assert records[0].model == "claude-sonnet-4-6"
+        assert records[0].input_tokens == 100000
+        assert records[0].output_tokens == 35000
+        assert records[0].cost_cents == 1025
+
+    def test_multi_day_iteration(self):
+        mock_resp = _mock_claude_code_api_response()
+        mock_client = MagicMock()
+        mock_client.get.return_value = mock_resp
+
+        with patch("l6e_mcp.anthropic_sync.httpx.Client") as MockClient:
+            MockClient.return_value.__enter__ = MagicMock(return_value=mock_client)
+            MockClient.return_value.__exit__ = MagicMock(return_value=False)
+
+            records = fetch_claude_code_records(
+                admin_key="sk-ant-admin-test",
+                start=datetime(2026, 3, 26, tzinfo=UTC),
+                end=datetime(2026, 3, 28, tzinfo=UTC),
+            )
+
+        assert len(records) == 2
+        assert mock_client.get.call_count == 2
+
+    def test_pagination_within_day(self):
+        page1 = _mock_claude_code_api_response(has_more=True, next_page="cursor_abc")
+        page2 = _mock_claude_code_api_response(has_more=False)
+
+        mock_client = MagicMock()
+        mock_client.get.side_effect = [page1, page2]
+
+        with patch("l6e_mcp.anthropic_sync.httpx.Client") as MockClient:
+            MockClient.return_value.__enter__ = MagicMock(return_value=mock_client)
+            MockClient.return_value.__exit__ = MagicMock(return_value=False)
+
+            records = fetch_claude_code_records(
+                admin_key="sk-ant-admin-test",
+                start=datetime(2026, 3, 26, tzinfo=UTC),
+                end=datetime(2026, 3, 27, tzinfo=UTC),
+            )
+
+        assert len(records) == 2
+        assert mock_client.get.call_count == 2
+
+    def test_api_actor_uses_key_name(self):
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {
+            "data": [{
+                "date": "2026-03-26T00:00:00Z",
+                "actor": {"type": "api_actor", "api_key_name": "my-key"},
+                "customer_type": "api",
+                "terminal_type": "iTerm.app",
+                "model_breakdown": [{
+                    "model": "claude-sonnet-4-6",
+                    "tokens": {"input": 1000, "output": 500, "cache_read": 0, "cache_creation": 0},
+                    "estimated_cost": {"currency": "USD", "amount": 50},
+                }],
+            }],
+            "has_more": False,
+        }
+        resp.raise_for_status = MagicMock()
+
+        with patch("l6e_mcp.anthropic_sync.httpx.Client") as MockClient:
+            MockClient.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            MockClient.return_value.__enter__.return_value.get.return_value = resp
+            MockClient.return_value.__exit__ = MagicMock(return_value=False)
+
+            records = fetch_claude_code_records(
+                admin_key="sk-ant-admin-test",
+                start=datetime(2026, 3, 26, tzinfo=UTC),
+                end=datetime(2026, 3, 27, tzinfo=UTC),
+            )
+
+        assert records[0].user_id == "my-key"
+        assert records[0].actor_type == "api_actor"
+        assert records[0].terminal_type == "iTerm.app"
+
+
+# ---------------------------------------------------------------------------
+# sync_and_upload with Claude Code (mocked HTTP)
+# ---------------------------------------------------------------------------
+
+class TestSyncAndUploadWithClaudeCode:
+    def _mock_cost_report_response(self):
+        resp = MagicMock()
+        resp.json.return_value = {
+            "data": [{
+                "starting_at": "2026-03-26T00:00:00+00:00",
+                "ending_at": "2026-03-27T00:00:00+00:00",
+                "results": [{
+                    "amount": "100",
+                    "model": "claude-sonnet-4-6",
+                    "workspace_id": None,
+                }],
+            }],
+            "has_more": False,
+        }
+        resp.raise_for_status = MagicMock()
+        return resp
+
+    def _mock_claude_code_response(self):
+        return _mock_claude_code_api_response()
+
+    def _mock_edge_response(self):
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {
+            "status": "accepted",
+            "batch_id": "batch-456",
+            "rows_inserted": 2,
+            "rows_deduplicated": 0,
+        }
+        resp.raise_for_status = MagicMock()
+        return resp
+
+    @patch("l6e_mcp.anthropic_sync._config")
+    def test_sync_includes_claude_code_rows(self, mock_config):
+        mock_config.get_api_key.return_value = "sk-l6e-test"
+        mock_config.get_cloud_endpoint.return_value = "https://api.l6e.ai"
+
+        cost_resp = self._mock_cost_report_response()
+        cc_resp = self._mock_claude_code_response()
+        edge_resp = self._mock_edge_response()
+
+        mock_client = MagicMock()
+        mock_client.get.side_effect = [cost_resp, cc_resp]
+
+        with patch("l6e_mcp.anthropic_sync.httpx.Client") as MockClient, \
+             patch("l6e_mcp.anthropic_sync.httpx.post", return_value=edge_resp):
+            MockClient.return_value.__enter__ = MagicMock(return_value=mock_client)
+            MockClient.return_value.__exit__ = MagicMock(return_value=False)
+
+            result = sync_and_upload(
+                admin_key="sk-ant-admin-test",
+                date_start="2026-03-26",
+                date_end="2026-03-27",
+                include_claude_code=True,
+            )
+
+        assert result.buckets_fetched == 1
+        assert result.claude_code_records_fetched == 1
+        assert result.claude_code_rows_sent == 1
+        assert result.rows_sent == 2
+        assert "claude_code" in result.source
+        assert result.total_cost_usd > Decimal("1")
+
+    @patch("l6e_mcp.anthropic_sync._config")
+    def test_claude_code_failure_still_syncs_api(self, mock_config):
+        """If the claude_code endpoint fails, API usage rows are still synced."""
+        mock_config.get_api_key.return_value = "sk-l6e-test"
+        mock_config.get_cloud_endpoint.return_value = "https://api.l6e.ai"
+
+        cost_resp = self._mock_cost_report_response()
+
+        cc_error_resp = MagicMock()
+        cc_error_resp.status_code = 403
+        cc_error_resp.text = "Forbidden"
+        cc_error_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "403", request=MagicMock(url="https://api.anthropic.com/v1/organizations/usage_report/claude_code"),
+            response=cc_error_resp,
+        )
+
+        edge_resp = self._mock_edge_response()
+        mock_client = MagicMock()
+        mock_client.get.side_effect = [cost_resp, cc_error_resp]
+
+        with patch("l6e_mcp.anthropic_sync.httpx.Client") as MockClient, \
+             patch("l6e_mcp.anthropic_sync.httpx.post", return_value=edge_resp):
+            MockClient.return_value.__enter__ = MagicMock(return_value=mock_client)
+            MockClient.return_value.__exit__ = MagicMock(return_value=False)
+
+            result = sync_and_upload(
+                admin_key="sk-ant-admin-test",
+                date_start="2026-03-26",
+                date_end="2026-03-27",
+                include_claude_code=True,
+            )
+
+        assert result.buckets_fetched == 1
+        assert result.rows_sent == 1
+        assert result.claude_code_records_fetched == 0
+        assert any("Claude Code analytics unavailable" in w for w in result.warnings)

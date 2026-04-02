@@ -799,6 +799,7 @@ async def l6e_sync_anthropic_usage(
     date_start: Annotated[str, "Start date YYYY-MM-DD"],
     date_end: Annotated[str, "End date YYYY-MM-DD"],
     api_key_id: Annotated[str, "Optional: filter by Anthropic API key ID"] = "",
+    include_claude_code: Annotated[bool, "Also sync Claude Code analytics (per-user productivity and cost metrics). Enabled by default."] = True,  # noqa: E501
 ) -> dict:
     """Sync Anthropic usage data locally via the Admin API. The admin key stays on your machine — only normalized billing rows are sent to l6e cloud. Requires an Anthropic organization account. Best practice: create a dedicated Admin key, run sync, then delete (revoke) the key in Anthropic; pasted keys may remain in assistant chat history."""  # noqa: E501
     if not admin_key.startswith("sk-ant-admin"):
@@ -814,6 +815,7 @@ async def l6e_sync_anthropic_usage(
             date_start=date_start,
             date_end=date_end,
             api_key_id=api_key_id or None,
+            include_claude_code=include_claude_code,
         )
     except httpx.HTTPStatusError as exc:
         status = exc.response.status_code
@@ -840,6 +842,9 @@ async def l6e_sync_anthropic_usage(
         "rows_sent": result.rows_sent,
         "total_cost_usd": float(result.total_cost_usd),
     }
+    if result.claude_code_records_fetched > 0 or result.claude_code_rows_sent > 0:
+        resp["claude_code_records_fetched"] = result.claude_code_records_fetched
+        resp["claude_code_rows_sent"] = result.claude_code_rows_sent
     if result.server_response:
         resp["server_result"] = {
             k: result.server_response[k]
