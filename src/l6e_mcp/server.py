@@ -790,7 +790,63 @@ async def l6e_run_end(
     }
 
 
-@mcp.tool(timeout=60)
+@mcp.tool(timeout=10)
+async def l6e_list_billing_batches() -> dict:
+    """List all active billing import batches. Returns batch IDs, source, row count, cost, and import date. Use to audit or identify stale imports before deletion."""  # noqa: E501
+    api_key = _config.get_api_key()
+    if not api_key:
+        raise ToolError(
+            "L6E_API_KEY is not configured. Set it in ~/.l6e/config.toml or "
+            "the L6E_API_KEY environment variable."
+        )
+    endpoint = _config.get_cloud_endpoint()
+    try:
+        resp = httpx.get(
+            f"{endpoint}/v1/billing/batches",
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=10.0,
+        )
+        resp.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        body = exc.response.text[:200]
+        raise ToolError(
+            f"l6e cloud error (HTTP {exc.response.status_code}): {body}"
+        ) from exc
+    return resp.json()
+
+
+@mcp.tool(timeout=10)
+async def l6e_delete_billing_batch(
+    batch_id: Annotated[str, "Batch ID to soft-delete (from l6e_list_billing_batches)"],
+) -> dict:
+    """Soft-delete a billing import batch and its truth rows. Use to clean up stale or test imports. The batch can be re-imported afterward."""  # noqa: E501
+    api_key = _config.get_api_key()
+    if not api_key:
+        raise ToolError(
+            "L6E_API_KEY is not configured. Set it in ~/.l6e/config.toml or "
+            "the L6E_API_KEY environment variable."
+        )
+    endpoint = _config.get_cloud_endpoint()
+    try:
+        resp = httpx.delete(
+            f"{endpoint}/v1/billing/batches/{batch_id}",
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=10.0,
+        )
+        resp.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            raise ToolError(
+                f"Batch '{batch_id}' not found or already deleted."
+            ) from exc
+        body = exc.response.text[:200]
+        raise ToolError(
+            f"l6e cloud error (HTTP {exc.response.status_code}): {body}"
+        ) from exc
+    return resp.json()
+
+
+@mcp.tool(timeout=120)
 async def l6e_sync_anthropic_usage(
     admin_key: Annotated[
         str,
@@ -799,6 +855,7 @@ async def l6e_sync_anthropic_usage(
     date_start: Annotated[str, "Start date YYYY-MM-DD"],
     date_end: Annotated[str, "End date YYYY-MM-DD"],
     api_key_id: Annotated[str, "Optional: filter by Anthropic API key ID"] = "",
+    include_claude_code: Annotated[bool, "Also sync Claude Code analytics (per-user productivity and cost metrics). Enabled by default."] = True,  # noqa: E501
 ) -> dict:
     """Sync Anthropic usage data locally via the Admin API. The admin key stays on your machine — only normalized billing rows are sent to l6e cloud. Requires an Anthropic organization account. Best practice: create a dedicated Admin key, run sync, then delete (revoke) the key in Anthropic; pasted keys may remain in assistant chat history."""  # noqa: E501
     if not admin_key.startswith("sk-ant-admin"):
@@ -814,6 +871,7 @@ async def l6e_sync_anthropic_usage(
             date_start=date_start,
             date_end=date_end,
             api_key_id=api_key_id or None,
+            include_claude_code=include_claude_code,
         )
     except httpx.HTTPStatusError as exc:
         status = exc.response.status_code
@@ -840,6 +898,9 @@ async def l6e_sync_anthropic_usage(
         "rows_sent": result.rows_sent,
         "total_cost_usd": float(result.total_cost_usd),
     }
+    if result.claude_code_records_fetched > 0 or result.claude_code_rows_sent > 0:
+        resp["claude_code_records_fetched"] = result.claude_code_records_fetched
+        resp["claude_code_rows_sent"] = result.claude_code_rows_sent
     if result.server_response:
         resp["server_result"] = {
             k: result.server_response[k]

@@ -16,8 +16,9 @@ import hashlib
 import logging
 import time
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -30,11 +31,13 @@ logger = logging.getLogger(__name__)
 _BASE_URL = "https://api.anthropic.com/v1/organizations"
 _COST_ENDPOINT = f"{_BASE_URL}/cost_report"
 _USAGE_ENDPOINT = f"{_BASE_URL}/usage_report/messages"
-_ANTHROPIC_TIMEOUT = 30.0
+_CLAUDE_CODE_ENDPOINT = f"{_BASE_URL}/usage_report/claude_code"
+_ANTHROPIC_TIMEOUT = 15.0
 _HOSTED_EDGE_TIMEOUT = 15.0
-_MAX_RETRIES = 4
+_MAX_RETRIES = 2
 _RETRY_BASE_SECONDS = 2.0
 _CENTS_PER_DOLLAR = Decimal("100")
+_MAX_CONCURRENT_DAYS = 5
 
 _TOKEN_PRICING: dict[str, dict[str, Decimal]] = {
     "claude-opus-4-0": {
@@ -96,6 +99,22 @@ class UsageBucket:
     cache_creation_tokens: int
 
 
+@dataclass(frozen=True)
+class ClaudeCodeRecord:
+    """One model's usage for a single user on a single day from claude_code report."""
+    date: datetime
+    user_id: str
+    actor_type: str
+    terminal_type: str
+    customer_type: str
+    model: str
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int
+    cache_creation_tokens: int
+    cost_cents: int
+
+
 @dataclass
 class SyncResult:
     buckets_fetched: int
@@ -104,6 +123,8 @@ class SyncResult:
     server_response: dict[str, Any]
     warnings: list[str] = field(default_factory=list)
     source: str = "cost_report"
+    claude_code_records_fetched: int = 0
+    claude_code_rows_sent: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -412,6 +433,158 @@ def _usage_buckets_to_row_dicts(buckets: list[UsageBucket]) -> list[dict[str, An
 
 
 # ---------------------------------------------------------------------------
+# usage_report/claude_code — Claude Code analytics (per-user, per-day)
+# ---------------------------------------------------------------------------
+
+def _fetch_claude_code_day(
+    day: datetime,
+    headers: dict[str, str],
+) -> list[ClaudeCodeRecord]:
+    """Fetch all Claude Code records for a single day (with pagination)."""
+    day_records: list[ClaudeCodeRecord] = []
+    day_str = day.strftime("%Y-%m-%d")
+    with httpx.Client(timeout=_ANTHROPIC_TIMEOUT) as client:
+        page_token: str | None = None
+        while True:
+            params: dict[str, Any] = {
+                "starting_at": day_str,
+                "limit": 1000,
+            }
+            if page_token:
+                params["page"] = page_token
+
+            resp = _request_with_retry(
+                client, _CLAUDE_CODE_ENDPOINT, headers=headers, params=params,
+            )
+            body = resp.json()
+
+            for user_record in body.get("data", []):
+                day_records.extend(_parse_claude_code_record(user_record))
+
+            if not body.get("has_more"):
+                break
+            page_token = body.get("next_page")
+            if not page_token:
+                break
+    return day_records
+
+
+def fetch_claude_code_records(
+    *,
+    admin_key: str,
+    start: datetime,
+    end: datetime,
+) -> list[ClaudeCodeRecord]:
+    """Fetch Claude Code analytics from the Anthropic Admin API.
+
+    The endpoint returns data for a single day at a time, so we fan out
+    concurrent requests (up to ``_MAX_CONCURRENT_DAYS`` at a time) across
+    the [start, end) range.  Each thread gets its own ``httpx.Client``.
+    """
+    headers = _make_headers(admin_key)
+    days: list[datetime] = []
+    current = start
+    while current < end:
+        days.append(current)
+        current += timedelta(days=1)
+
+    if not days:
+        return []
+
+    all_records: list[ClaudeCodeRecord] = []
+    with ThreadPoolExecutor(max_workers=_MAX_CONCURRENT_DAYS) as pool:
+        futures = {
+            pool.submit(_fetch_claude_code_day, d, headers): d
+            for d in days
+        }
+        for future in as_completed(futures):
+            all_records.extend(future.result())
+
+    logger.info("Fetched %d Claude Code records across %d days", len(all_records), len(days))
+    return all_records
+
+
+def _parse_claude_code_record(record: dict[str, Any]) -> list[ClaudeCodeRecord]:
+    date = datetime.fromisoformat(record["date"])
+    actor = record.get("actor", {})
+    if actor.get("type") == "user_actor":
+        user_id = actor.get("email_address", "unknown")
+    else:
+        user_id = actor.get("api_key_name", "unknown")
+    actor_type = actor.get("type", "unknown")
+    terminal_type = record.get("terminal_type", "unknown")
+    customer_type = record.get("customer_type", "unknown")
+
+    out: list[ClaudeCodeRecord] = []
+    for mb in record.get("model_breakdown", []):
+        tokens = mb.get("tokens", {})
+        cost_info = mb.get("estimated_cost", {})
+        out.append(ClaudeCodeRecord(
+            date=date,
+            user_id=user_id,
+            actor_type=actor_type,
+            terminal_type=terminal_type,
+            customer_type=customer_type,
+            model=mb.get("model", "unknown"),
+            input_tokens=int(tokens.get("input", 0)),
+            output_tokens=int(tokens.get("output", 0)),
+            cache_read_tokens=int(tokens.get("cache_read", 0)),
+            cache_creation_tokens=int(tokens.get("cache_creation", 0)),
+            cost_cents=int(cost_info.get("amount", 0)),
+        ))
+    return out
+
+
+def _claude_code_fingerprint(r: ClaudeCodeRecord) -> str:
+    parts = "|".join([
+        "anthropic",
+        "claude_code",
+        r.user_id,
+        r.model,
+        r.date.isoformat(),
+        str(r.cost_cents),
+        str(r.input_tokens),
+        str(r.output_tokens),
+        str(r.cache_read_tokens),
+        str(r.cache_creation_tokens),
+        r.terminal_type,
+    ])
+    return hashlib.sha256(parts.encode("utf-8")).hexdigest()
+
+
+def _claude_code_records_to_row_dicts(
+    records: list[ClaudeCodeRecord],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for r in records:
+        if r.cost_cents == 0 and r.input_tokens == 0 and r.output_tokens == 0:
+            continue
+
+        cost_usd = (Decimal(r.cost_cents) / _CENTS_PER_DOLLAR).quantize(
+            Decimal("0.000001"),
+        )
+        total_input = r.input_tokens + r.cache_read_tokens + r.cache_creation_tokens
+        day_end = r.date + timedelta(days=1)
+
+        rows.append({
+            "provider": "anthropic",
+            "model_used": r.model,
+            "input_tokens": total_input if total_input > 0 else None,
+            "output_tokens": r.output_tokens if r.output_tokens > 0 else None,
+            "cost_usd": str(cost_usd),
+            "billing_kind": "claude_code",
+            "user_id": r.user_id,
+            "started_at": r.date.timestamp(),
+            "finished_at": day_end.timestamp(),
+            "content_fingerprint": _claude_code_fingerprint(r),
+            "terminal_type": r.terminal_type,
+            "customer_type": r.customer_type,
+            "actor_type": r.actor_type,
+        })
+    return rows
+
+
+# ---------------------------------------------------------------------------
 # Orchestrator — tries cost_report first, falls back to usage_report
 # ---------------------------------------------------------------------------
 
@@ -421,12 +594,18 @@ def sync_and_upload(
     date_start: str,
     date_end: str,
     api_key_id: str | None = None,
+    include_claude_code: bool = True,
 ) -> SyncResult:
     """Fetch billing data from Anthropic, normalize, and POST to hosted-edge.
 
     Tries cost_report first (actual dollar amounts, more reliable). Falls
-    back to usage_report/messages if cost_report fails. The admin_key is
-    used only for Anthropic API requests and is never sent to hosted-edge.
+    back to usage_report/messages if cost_report fails. When
+    include_claude_code is True (default), also fetches Claude Code
+    analytics from the usage_report/claude_code endpoint and merges the
+    rows into a single upload.
+
+    The admin_key is used only for Anthropic API requests and is never
+    sent to hosted-edge.
     """
     api_key = _config.get_api_key()
     if not api_key:
@@ -472,9 +651,31 @@ def sync_and_upload(
         buckets_fetched = len(usage_buckets)
         row_dicts = _usage_buckets_to_row_dicts(usage_buckets)
 
+    # Claude Code analytics (additive — merges with API usage rows)
+    claude_code_records_fetched = 0
+    claude_code_rows_sent = 0
+    if include_claude_code:
+        try:
+            cc_records = fetch_claude_code_records(
+                admin_key=admin_key, start=start, end=end,
+            )
+            claude_code_records_fetched = len(cc_records)
+            cc_row_dicts = _claude_code_records_to_row_dicts(cc_records)
+            claude_code_rows_sent = len(cc_row_dicts)
+            row_dicts.extend(cc_row_dicts)
+        except httpx.HTTPStatusError as exc:
+            logger.warning(
+                "claude_code report failed (HTTP %s). Skipping Claude Code data.",
+                exc.response.status_code,
+            )
+            warnings.append(
+                f"Claude Code analytics unavailable (HTTP {exc.response.status_code}). "
+                "API usage rows were still synced."
+            )
+
     total_cost = sum((Decimal(r["cost_usd"]) for r in row_dicts), Decimal("0"))
 
-    if buckets_fetched == 0:
+    if buckets_fetched == 0 and claude_code_records_fetched == 0:
         warnings.append("No billing data returned from Anthropic for the requested date range.")
 
     if not row_dicts:
@@ -485,17 +686,24 @@ def sync_and_upload(
             server_response={},
             warnings=warnings,
             source=source,
+            claude_code_records_fetched=claude_code_records_fetched,
+            claude_code_rows_sent=claude_code_rows_sent,
         )
+
+    sources = [source]
+    if claude_code_rows_sent > 0:
+        sources.append("claude_code")
 
     payload = {
         "source": "anthropic_api",
         "rows": row_dicts,
         "metadata": {
-            "sync_type": f"anthropic_admin_api_{source}",
+            "sync_type": f"anthropic_admin_api_{'+'.join(sources)}",
             "date_start": date_start,
             "date_end": date_end,
             "api_key_filter": api_key_id,
             "buckets_fetched": buckets_fetched,
+            "claude_code_records_fetched": claude_code_records_fetched,
         },
     }
 
@@ -515,5 +723,7 @@ def sync_and_upload(
         total_cost_usd=total_cost,
         server_response=server_response,
         warnings=warnings,
-        source=source,
+        source="+".join(sources),
+        claude_code_records_fetched=claude_code_records_fetched,
+        claude_code_rows_sent=claude_code_rows_sent,
     )
