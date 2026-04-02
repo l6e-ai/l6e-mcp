@@ -14,6 +14,7 @@ from l6e_mcp.anthropic_sync import (
     UsageBucket,
     _claude_code_records_to_row_dicts,
     _compute_cost,
+    _fetch_claude_code_day,
     _resolve_pricing,
     _usage_buckets_to_row_dicts,
     fetch_claude_code_records,
@@ -457,8 +458,10 @@ def _mock_claude_code_api_response(*, has_more=False, next_page=None):
     return resp
 
 
-class TestFetchClaudeCodeRecords:
-    def test_single_day_single_page(self):
+class TestFetchClaudeCodeDay:
+    """Tests for _fetch_claude_code_day (single-day helper used by each thread)."""
+
+    def test_single_page(self):
         mock_resp = _mock_claude_code_api_response()
 
         with patch("l6e_mcp.anthropic_sync.httpx.Client") as MockClient:
@@ -466,10 +469,9 @@ class TestFetchClaudeCodeRecords:
             MockClient.return_value.__enter__.return_value.get.return_value = mock_resp
             MockClient.return_value.__exit__ = MagicMock(return_value=False)
 
-            records = fetch_claude_code_records(
-                admin_key="sk-ant-admin-test",
-                start=datetime(2026, 3, 26, tzinfo=UTC),
-                end=datetime(2026, 3, 27, tzinfo=UTC),
+            records = _fetch_claude_code_day(
+                datetime(2026, 3, 26, tzinfo=UTC),
+                {"x-api-key": "sk-ant-admin-test"},
             )
 
         assert len(records) == 1
@@ -478,24 +480,6 @@ class TestFetchClaudeCodeRecords:
         assert records[0].input_tokens == 100000
         assert records[0].output_tokens == 35000
         assert records[0].cost_cents == 1025
-
-    def test_multi_day_iteration(self):
-        mock_resp = _mock_claude_code_api_response()
-        mock_client = MagicMock()
-        mock_client.get.return_value = mock_resp
-
-        with patch("l6e_mcp.anthropic_sync.httpx.Client") as MockClient:
-            MockClient.return_value.__enter__ = MagicMock(return_value=mock_client)
-            MockClient.return_value.__exit__ = MagicMock(return_value=False)
-
-            records = fetch_claude_code_records(
-                admin_key="sk-ant-admin-test",
-                start=datetime(2026, 3, 26, tzinfo=UTC),
-                end=datetime(2026, 3, 28, tzinfo=UTC),
-            )
-
-        assert len(records) == 2
-        assert mock_client.get.call_count == 2
 
     def test_pagination_within_day(self):
         page1 = _mock_claude_code_api_response(has_more=True, next_page="cursor_abc")
@@ -508,10 +492,9 @@ class TestFetchClaudeCodeRecords:
             MockClient.return_value.__enter__ = MagicMock(return_value=mock_client)
             MockClient.return_value.__exit__ = MagicMock(return_value=False)
 
-            records = fetch_claude_code_records(
-                admin_key="sk-ant-admin-test",
-                start=datetime(2026, 3, 26, tzinfo=UTC),
-                end=datetime(2026, 3, 27, tzinfo=UTC),
+            records = _fetch_claude_code_day(
+                datetime(2026, 3, 26, tzinfo=UTC),
+                {"x-api-key": "sk-ant-admin-test"},
             )
 
         assert len(records) == 2
@@ -541,15 +524,69 @@ class TestFetchClaudeCodeRecords:
             MockClient.return_value.__enter__.return_value.get.return_value = resp
             MockClient.return_value.__exit__ = MagicMock(return_value=False)
 
+            records = _fetch_claude_code_day(
+                datetime(2026, 3, 26, tzinfo=UTC),
+                {"x-api-key": "sk-ant-admin-test"},
+            )
+
+        assert records[0].user_id == "my-key"
+        assert records[0].actor_type == "api_actor"
+        assert records[0].terminal_type == "iTerm.app"
+
+
+class TestFetchClaudeCodeRecords:
+    """Tests for the concurrent orchestrator that fans out to _fetch_claude_code_day."""
+
+    def test_single_day(self):
+        record = _make_cc_record()
+        target = "l6e_mcp.anthropic_sync._fetch_claude_code_day"
+
+        with patch(target, return_value=[record]) as mock_day:
             records = fetch_claude_code_records(
                 admin_key="sk-ant-admin-test",
                 start=datetime(2026, 3, 26, tzinfo=UTC),
                 end=datetime(2026, 3, 27, tzinfo=UTC),
             )
 
-        assert records[0].user_id == "my-key"
-        assert records[0].actor_type == "api_actor"
-        assert records[0].terminal_type == "iTerm.app"
+        assert len(records) == 1
+        assert mock_day.call_count == 1
+
+    def test_multi_day_concurrent(self):
+        record = _make_cc_record()
+        target = "l6e_mcp.anthropic_sync._fetch_claude_code_day"
+
+        with patch(target, return_value=[record]) as mock_day:
+            records = fetch_claude_code_records(
+                admin_key="sk-ant-admin-test",
+                start=datetime(2026, 3, 26, tzinfo=UTC),
+                end=datetime(2026, 3, 31, tzinfo=UTC),
+            )
+
+        assert len(records) == 5
+        assert mock_day.call_count == 5
+
+    def test_empty_range(self):
+        records = fetch_claude_code_records(
+            admin_key="sk-ant-admin-test",
+            start=datetime(2026, 3, 27, tzinfo=UTC),
+            end=datetime(2026, 3, 27, tzinfo=UTC),
+        )
+        assert records == []
+
+    def test_propagates_exceptions(self):
+        error = httpx.HTTPStatusError(
+            "429",
+            request=MagicMock(),
+            response=MagicMock(status_code=429),
+        )
+        target = "l6e_mcp.anthropic_sync._fetch_claude_code_day"
+        with patch(target, side_effect=error), \
+             pytest.raises(httpx.HTTPStatusError):
+            fetch_claude_code_records(
+                admin_key="sk-ant-admin-test",
+                start=datetime(2026, 3, 26, tzinfo=UTC),
+                end=datetime(2026, 3, 27, tzinfo=UTC),
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -574,9 +611,6 @@ class TestSyncAndUploadWithClaudeCode:
         resp.raise_for_status = MagicMock()
         return resp
 
-    def _mock_claude_code_response(self):
-        return _mock_claude_code_api_response()
-
     def _mock_edge_response(self):
         resp = MagicMock()
         resp.status_code = 200
@@ -595,14 +629,14 @@ class TestSyncAndUploadWithClaudeCode:
         mock_config.get_cloud_endpoint.return_value = "https://api.l6e.ai"
 
         cost_resp = self._mock_cost_report_response()
-        cc_resp = self._mock_claude_code_response()
         edge_resp = self._mock_edge_response()
-
-        mock_client = MagicMock()
-        mock_client.get.side_effect = [cost_resp, cc_resp]
+        cc_record = _make_cc_record()
 
         with patch("l6e_mcp.anthropic_sync.httpx.Client") as MockClient, \
-             patch("l6e_mcp.anthropic_sync.httpx.post", return_value=edge_resp):
+             patch("l6e_mcp.anthropic_sync.httpx.post", return_value=edge_resp), \
+             patch("l6e_mcp.anthropic_sync._fetch_claude_code_day", return_value=[cc_record]):
+            mock_client = MagicMock()
+            mock_client.get.return_value = cost_resp
             MockClient.return_value.__enter__ = MagicMock(return_value=mock_client)
             MockClient.return_value.__exit__ = MagicMock(return_value=False)
 
@@ -627,21 +661,20 @@ class TestSyncAndUploadWithClaudeCode:
         mock_config.get_cloud_endpoint.return_value = "https://api.l6e.ai"
 
         cost_resp = self._mock_cost_report_response()
-
-        cc_error_resp = MagicMock()
-        cc_error_resp.status_code = 403
-        cc_error_resp.text = "Forbidden"
-        cc_error_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
-            "403", request=MagicMock(url="https://api.anthropic.com/v1/organizations/usage_report/claude_code"),
-            response=cc_error_resp,
-        )
-
         edge_resp = self._mock_edge_response()
-        mock_client = MagicMock()
-        mock_client.get.side_effect = [cost_resp, cc_error_resp]
 
         with patch("l6e_mcp.anthropic_sync.httpx.Client") as MockClient, \
-             patch("l6e_mcp.anthropic_sync.httpx.post", return_value=edge_resp):
+             patch("l6e_mcp.anthropic_sync.httpx.post", return_value=edge_resp), \
+             patch(
+                 "l6e_mcp.anthropic_sync.fetch_claude_code_records",
+                 side_effect=httpx.HTTPStatusError(
+                     "403",
+                     request=MagicMock(url="https://api.anthropic.com/v1/organizations/usage_report/claude_code"),
+                     response=MagicMock(status_code=403),
+                 ),
+             ):
+            mock_client = MagicMock()
+            mock_client.get.return_value = cost_resp
             MockClient.return_value.__enter__ = MagicMock(return_value=mock_client)
             MockClient.return_value.__exit__ = MagicMock(return_value=False)
 

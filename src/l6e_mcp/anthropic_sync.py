@@ -16,6 +16,7 @@ import hashlib
 import logging
 import time
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -31,11 +32,12 @@ _BASE_URL = "https://api.anthropic.com/v1/organizations"
 _COST_ENDPOINT = f"{_BASE_URL}/cost_report"
 _USAGE_ENDPOINT = f"{_BASE_URL}/usage_report/messages"
 _CLAUDE_CODE_ENDPOINT = f"{_BASE_URL}/usage_report/claude_code"
-_ANTHROPIC_TIMEOUT = 30.0
+_ANTHROPIC_TIMEOUT = 15.0
 _HOSTED_EDGE_TIMEOUT = 15.0
-_MAX_RETRIES = 4
+_MAX_RETRIES = 2
 _RETRY_BASE_SECONDS = 2.0
 _CENTS_PER_DOLLAR = Decimal("100")
+_MAX_CONCURRENT_DAYS = 5
 
 _TOKEN_PRICING: dict[str, dict[str, Decimal]] = {
     "claude-opus-4-0": {
@@ -434,6 +436,39 @@ def _usage_buckets_to_row_dicts(buckets: list[UsageBucket]) -> list[dict[str, An
 # usage_report/claude_code — Claude Code analytics (per-user, per-day)
 # ---------------------------------------------------------------------------
 
+def _fetch_claude_code_day(
+    day: datetime,
+    headers: dict[str, str],
+) -> list[ClaudeCodeRecord]:
+    """Fetch all Claude Code records for a single day (with pagination)."""
+    day_records: list[ClaudeCodeRecord] = []
+    day_str = day.strftime("%Y-%m-%d")
+    with httpx.Client(timeout=_ANTHROPIC_TIMEOUT) as client:
+        page_token: str | None = None
+        while True:
+            params: dict[str, Any] = {
+                "starting_at": day_str,
+                "limit": 1000,
+            }
+            if page_token:
+                params["page"] = page_token
+
+            resp = _request_with_retry(
+                client, _CLAUDE_CODE_ENDPOINT, headers=headers, params=params,
+            )
+            body = resp.json()
+
+            for user_record in body.get("data", []):
+                day_records.extend(_parse_claude_code_record(user_record))
+
+            if not body.get("has_more"):
+                break
+            page_token = body.get("next_page")
+            if not page_token:
+                break
+    return day_records
+
+
 def fetch_claude_code_records(
     *,
     admin_key: str,
@@ -442,45 +477,31 @@ def fetch_claude_code_records(
 ) -> list[ClaudeCodeRecord]:
     """Fetch Claude Code analytics from the Anthropic Admin API.
 
-    The endpoint returns data for a single day at a time, so we iterate
-    day-by-day over the [start, end) range. Each user record's
-    model_breakdown is flattened into individual ClaudeCodeRecords.
+    The endpoint returns data for a single day at a time, so we fan out
+    concurrent requests (up to ``_MAX_CONCURRENT_DAYS`` at a time) across
+    the [start, end) range.  Each thread gets its own ``httpx.Client``.
     """
     headers = _make_headers(admin_key)
-    records: list[ClaudeCodeRecord] = []
+    days: list[datetime] = []
     current = start
+    while current < end:
+        days.append(current)
+        current += timedelta(days=1)
 
-    with httpx.Client(timeout=_ANTHROPIC_TIMEOUT) as client:
-        while current < end:
-            day_str = current.strftime("%Y-%m-%d")
-            page_token: str | None = None
+    if not days:
+        return []
 
-            while True:
-                params: dict[str, Any] = {
-                    "starting_at": day_str,
-                    "limit": 1000,
-                }
-                if page_token:
-                    params["page"] = page_token
+    all_records: list[ClaudeCodeRecord] = []
+    with ThreadPoolExecutor(max_workers=_MAX_CONCURRENT_DAYS) as pool:
+        futures = {
+            pool.submit(_fetch_claude_code_day, d, headers): d
+            for d in days
+        }
+        for future in as_completed(futures):
+            all_records.extend(future.result())
 
-                resp = _request_with_retry(
-                    client, _CLAUDE_CODE_ENDPOINT, headers=headers, params=params,
-                )
-                body = resp.json()
-
-                for user_record in body.get("data", []):
-                    records.extend(_parse_claude_code_record(user_record))
-
-                if not body.get("has_more"):
-                    break
-                page_token = body.get("next_page")
-                if not page_token:
-                    break
-
-            current += timedelta(days=1)
-
-    logger.info("Fetched %d Claude Code model-user-day records", len(records))
-    return records
+    logger.info("Fetched %d Claude Code records across %d days", len(all_records), len(days))
+    return all_records
 
 
 def _parse_claude_code_record(record: dict[str, Any]) -> list[ClaudeCodeRecord]:

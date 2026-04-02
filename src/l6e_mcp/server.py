@@ -790,7 +790,63 @@ async def l6e_run_end(
     }
 
 
-@mcp.tool(timeout=60)
+@mcp.tool(timeout=10)
+async def l6e_list_billing_batches() -> dict:
+    """List all active billing import batches. Returns batch IDs, source, row count, cost, and import date. Use to audit or identify stale imports before deletion."""  # noqa: E501
+    api_key = _config.get_api_key()
+    if not api_key:
+        raise ToolError(
+            "L6E_API_KEY is not configured. Set it in ~/.l6e/config.toml or "
+            "the L6E_API_KEY environment variable."
+        )
+    endpoint = _config.get_cloud_endpoint()
+    try:
+        resp = httpx.get(
+            f"{endpoint}/v1/billing/batches",
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=10.0,
+        )
+        resp.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        body = exc.response.text[:200]
+        raise ToolError(
+            f"l6e cloud error (HTTP {exc.response.status_code}): {body}"
+        ) from exc
+    return resp.json()
+
+
+@mcp.tool(timeout=10)
+async def l6e_delete_billing_batch(
+    batch_id: Annotated[str, "Batch ID to soft-delete (from l6e_list_billing_batches)"],
+) -> dict:
+    """Soft-delete a billing import batch and its truth rows. Use to clean up stale or test imports. The batch can be re-imported afterward."""  # noqa: E501
+    api_key = _config.get_api_key()
+    if not api_key:
+        raise ToolError(
+            "L6E_API_KEY is not configured. Set it in ~/.l6e/config.toml or "
+            "the L6E_API_KEY environment variable."
+        )
+    endpoint = _config.get_cloud_endpoint()
+    try:
+        resp = httpx.delete(
+            f"{endpoint}/v1/billing/batches/{batch_id}",
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=10.0,
+        )
+        resp.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            raise ToolError(
+                f"Batch '{batch_id}' not found or already deleted."
+            ) from exc
+        body = exc.response.text[:200]
+        raise ToolError(
+            f"l6e cloud error (HTTP {exc.response.status_code}): {body}"
+        ) from exc
+    return resp.json()
+
+
+@mcp.tool(timeout=120)
 async def l6e_sync_anthropic_usage(
     admin_key: Annotated[
         str,
