@@ -392,6 +392,7 @@ async def _try_server_authorize(
         estimated_cost_usd=float(raw_cost),
         budget_usd=session.policy.budget,
         spent_usd=snapshot["spent_usd"],
+        session_client=session.client,
     )
     if server_resp is None:
         return None

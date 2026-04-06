@@ -76,22 +76,26 @@ async def try_remote_authorize(
     estimated_cost_usd: float,
     budget_usd: float,
     spent_usd: float,
+    session_client: str | None = None,
     timeout: float = _DEFAULT_TIMEOUT,
 ) -> dict | None:
     """POST to server-side authorize. Returns response dict or None on failure."""
     url = f"{endpoint}/v1/authorize"
-    client = _get_async_client(timeout)
+    http_client = _get_async_client(timeout)
+    body: dict = {
+        "session_id": session_id,
+        "model": model,
+        "tool_name": tool_name,
+        "estimated_cost_usd": estimated_cost_usd,
+        "budget_usd": budget_usd,
+        "spent_usd": spent_usd,
+    }
+    if session_client:
+        body["client"] = session_client
     try:
-        resp = await client.post(
+        resp = await http_client.post(
             url,
-            json={
-                "session_id": session_id,
-                "model": model,
-                "tool_name": tool_name,
-                "estimated_cost_usd": estimated_cost_usd,
-                "budget_usd": budget_usd,
-                "spent_usd": spent_usd,
-            },
+            json=body,
             headers={"Authorization": f"Bearer {api_key}"},
         )
         if resp.status_code != 200:
