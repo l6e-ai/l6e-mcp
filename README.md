@@ -14,12 +14,12 @@
 | src/l6e\_mcp/core/authorization.py           |       68 |        3 |     96% |110, 126, 181 |
 | src/l6e\_mcp/core/calibration\_cache.py      |       45 |        0 |    100% |           |
 | src/l6e\_mcp/core/exactness.py               |       29 |        0 |    100% |           |
-| src/l6e\_mcp/core/remote\_authorize.py       |       50 |       20 |     60% |32-38, 43-56 |
+| src/l6e\_mcp/core/remote\_authorize.py       |       53 |       21 |     60% |32-38, 43-56, 94 |
 | src/l6e\_mcp/core/session\_report\_worker.py |       38 |        1 |     97% |        45 |
 | src/l6e\_mcp/core/status\_telemetry.py       |       53 |        1 |     98% |        60 |
 | src/l6e\_mcp/outbox.py                       |      105 |        8 |     92% |88-89, 106-107, 135-137, 166 |
 | src/l6e\_mcp/overhead.py                     |       18 |        1 |     94% |        31 |
-| src/l6e\_mcp/server.py                       |      363 |       65 |     82% |94, 101, 104, 112, 115, 173, 188-190, 216, 436, 438, 684, 748, 796-815, 823-846, 861-913, 917-919, 923 |
+| src/l6e\_mcp/server.py                       |      363 |       65 |     82% |94, 101, 104, 112, 115, 173, 188-190, 216, 437, 439, 685, 749, 797-816, 824-847, 862-914, 918-920, 924 |
 | src/l6e\_mcp/session\_store.py               |       48 |        4 |     92% |100, 173, 176, 196 |
 | src/l6e\_mcp/store/\_\_init\_\_.py           |        0 |        0 |    100% |           |
 | src/l6e\_mcp/store/\_connection.py           |       47 |        0 |    100% |           |
@@ -30,7 +30,7 @@
 | src/l6e\_mcp/store/schema.py                 |       17 |        0 |    100% |           |
 | src/l6e\_mcp/store/sessions.py               |      108 |        3 |     97% |139, 193, 216 |
 | src/l6e\_mcp/store/summary.py                |       74 |        5 |     93% |119, 122, 124, 126, 153 |
-| **TOTAL**                                    | **1775** |  **160** | **91%** |           |
+| **TOTAL**                                    | **1778** |  **161** | **91%** |           |
 
 
 ## Setup coverage badge
