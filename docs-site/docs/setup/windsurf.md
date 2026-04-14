@@ -77,9 +77,18 @@ If the server does not appear, check that `uvx` is on your PATH (`which uvx`) or
 
 ## Rules for AI
 
-Add the enforcement rule to a Windsurf rules file so Cascade automatically follows the l6e lifecycle.
+The enforcement rule is what teaches the agent the l6e lifecycle. It covers checkpoint policy (when to call `l6e_authorize_call`), estimation defaults, model identification, sub-agent budget gates, budget sizing guidance, and session safety. Without it, the MCP tools are available but the agent won't know how to use them correctly.
 
-The rule content is in [`.windsurf/rules/l6e-budget-enforcement.md`](https://github.com/l6e-ai/l6e-mcp/blob/main/.windsurf/rules/l6e-budget-enforcement.md) in the repository. Paste it into your Windsurf rules (`Cmd+Shift+P` → `Windsurf: Open Rules`).
+Add the rule to a Windsurf rules file so Cascade automatically follows the l6e lifecycle every session.
+
+Open your rules via `Cmd+Shift+P` → `Windsurf: Open Rules`, or place the file directly:
+
+- **Global**: `~/.windsurf/rules/l6e-budget-enforcement.md`
+- **Project-level** (checked into git): `.windsurf/rules/l6e-budget-enforcement.md`
+
+The up-to-date rule content is at [`.windsurf/rules/l6e-budget-enforcement.md`](https://github.com/l6e-ai/l6e-mcp/blob/main/.windsurf/rules/l6e-budget-enforcement.md) in the repository. The rule is rendered from a [single template](https://github.com/l6e-ai/l6e-mcp/blob/main/docs/agent-rules/base.md.j2) — check the repo for the latest version when updating.
+
+See the [Prompt Guide](../prompt-guide) for always-apply vs on-demand patterns and how to override enforcement per-message.
 
 ## Example conversation starter
 

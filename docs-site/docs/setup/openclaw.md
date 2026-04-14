@@ -110,12 +110,16 @@ openclaw doctor
 
 ## Rules for AI
 
-Add the enforcement rule to `AGENTS.md` in the agent workspace so it is loaded every session.
+The enforcement rule is what teaches the agent the l6e lifecycle. It covers checkpoint policy (when to call `l6e_authorize_call`), estimation defaults, model identification, sub-agent budget gates, budget sizing guidance, and session safety. Without it, the MCP tools are available but the agent won't know how to use them correctly.
+
+Add the rule to `AGENTS.md` in the agent workspace so it is loaded every session.
 
 - **All agents (default workspace)**: `~/.openclaw/workspace/AGENTS.md`
 - **Specific agent**: `~/.openclaw/agents/{agent_id}/AGENTS.md`
 
-The rule content is in [`.openclaw/AGENTS.md`](https://github.com/l6e-ai/l6e-mcp/blob/main/.openclaw/AGENTS.md) in the repository. Append its contents to your `AGENTS.md`.
+The up-to-date rule content is at [`.openclaw/AGENTS.md`](https://github.com/l6e-ai/l6e-mcp/blob/main/.openclaw/AGENTS.md) in the repository. Append its contents to your `AGENTS.md`. The rule is rendered from a [single template](https://github.com/l6e-ai/l6e-mcp/blob/main/docs/agent-rules/base.md.j2) — check the repo for the latest version when updating.
+
+See the [Prompt Guide](../prompt-guide) for always-apply vs on-demand patterns and how to override enforcement per-message.
 
 ## Example conversation starter
 

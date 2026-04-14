@@ -79,8 +79,16 @@ The "No MCP resources available" message in Cursor chat is expected and harmless
 
 ## Rules for AI
 
-Set up a Cursor rule — either globally or per-project.
-The rule from [`.cursor/rules/l6e-budget-enforcement.mdc`](https://github.com/l6e-ai/l6e-mcp/blob/main/.cursor/rules/l6e-budget-enforcement.mdc) on the latest release tag is always the best source.
+The enforcement rule is what teaches the agent the l6e lifecycle. It covers checkpoint policy (when to call `l6e_authorize_call`), estimation defaults, model identification, sub-agent budget gates, budget sizing guidance, and session safety. Without it, the MCP tools are available but the agent won't know how to use them correctly.
+
+Set up a Cursor rule — either globally or per-project — with `alwaysApply: true` so every conversation gets enforcement automatically.
+
+- **Global** (all projects): `~/.cursor/rules/l6e-budget-enforcement.mdc`
+- **Project-level** (checked into git): `.cursor/rules/l6e-budget-enforcement.mdc`
+
+The up-to-date rule content is at [`.cursor/rules/l6e-budget-enforcement.mdc`](https://github.com/l6e-ai/l6e-mcp/blob/main/.cursor/rules/l6e-budget-enforcement.mdc) in the repository. Copy it into one of the paths above. The rule is rendered from a [single template](https://github.com/l6e-ai/l6e-mcp/blob/main/docs/agent-rules/base.md.j2) — check the repo for the latest version when updating.
+
+See the [Prompt Guide](../prompt-guide) for always-apply vs on-demand patterns and how to override enforcement per-message.
 
 ## Example conversation starter
 

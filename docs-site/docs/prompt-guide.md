@@ -15,6 +15,19 @@ End any message where you want enforcement with **`budget $X`**. That single hab
 
 ## Rule setup
 
+The enforcement rule is the core of l6e — it's a structured prompt that teaches the agent the full budget lifecycle. It covers:
+
+- **Checkpoint policy** — when to call `l6e_authorize_call` (stage transitions, sub-agent gates, todo items, pressure escalation)
+- **Estimation defaults** — token estimate guidelines so the budget gate has useful inputs
+- **Model identification** — how to derive the `model` parameter from the agent's system prompt
+- **Budget sizing** — guidance on calibration factors and minimum budgets
+- **Sub-agent rules** — single-session vs multi-session orchestration
+- **Session safety** — one session per task, never reuse IDs
+
+Without this rule, the agent has l6e tools available but no instructions for when or how to call them. **The rule is required for enforcement to work.**
+
+The rule is maintained in the repository as a [Jinja2 template (`base.md.j2`)](https://github.com/l6e-ai/l6e-mcp/blob/main/docs/agent-rules/base.md.j2), rendered per-client into the files linked from each [setup guide](setup/cursor). Always pull the latest version from the repo — the rule evolves alongside MCP tool changes.
+
 ### Always-apply (recommended)
 
 Set the rule to always apply (Cursor: `alwaysApply: true` in `.mdc` frontmatter; Claude Code: place in `CLAUDE.md`). The agent picks up the rule automatically every conversation.
