@@ -31,6 +31,12 @@ Then follow the setup guide for your editor:
 - **[Windsurf →](setup/windsurf)**
 - **[OpenClaw →](setup/openclaw)**
 
+:::warning The enforcement rule is required
+Installing the MCP server is only half the setup. Each guide above includes a **Rules for AI** step that installs the **enforcement prompt** — a structured rule that teaches the agent the full l6e lifecycle: checkpoint policy, estimation defaults, sub-agent gates, model identification, and session safety. Without it, the agent has tools available but no instructions for when or how to call them.
+
+The rule is maintained in the repository as a [Jinja2 template](https://github.com/l6e-ai/l6e-mcp/blob/main/docs/agent-rules/base.md.j2) and rendered per-client. Always use the version from the repo — it stays in sync with MCP tool changes.
+:::
+
 ## Tools
 
 | Tool | Purpose |

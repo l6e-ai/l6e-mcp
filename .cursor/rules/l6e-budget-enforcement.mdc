@@ -6,7 +6,7 @@ alwaysApply: true
 # l6e budget enforcement
 
 Use l6e only via MCP tools. Never import `l6e` or `l6e_mcp` in Python.
-Pass `model` as the exact active billing model ID (or `"unknown"`). Set `client` to `"cursor"`. USE IN PLAN OR AGENT MODE.
+Pass `model` as your billing model ID — see "Model identification" below to derive it from your system prompt (or pass `"unknown"`). Set `client` to `"cursor"`. USE IN PLAN OR AGENT MODE.
 
 **Always call MCP tools with only the parameters defined in the tool schema. Never invent parameters — `additionalProperties: false` means any extra field causes a hard validation error. When in doubt, read the schema descriptor before calling.**
 
@@ -40,6 +40,19 @@ All budget checks use `l6e_authorize_call`. Pass `check_only=True` for lightweig
 - `allow`: proceed. Check the `budget_pressure` field in the response. If `"moderate"`, continue but prefer cheaper approaches (skip subagents, minimize file reads). If `"high"`, inform the user of budget pressure before continuing — they may want to increase the budget or scope down.
 - `reroute`: stop and tell the user budget threshold is reached; suggest a cheaper model
 - `halt`: stop making tool calls immediately. You retain full context — communicate your complete plan, findings, and remaining work to the user. They can approve additional budget to continue without losing context. Do NOT start a new session; wait for the user to set a new budget.
+
+## Model identification
+
+Your system prompt or context tells you which model you are (e.g. "powered by Opus 4.6"). Use this to derive the `model` value:
+
+1. **Identify your family from the name in your system prompt:**
+   - "Opus" → `claude-opus`
+   - "Sonnet" → `claude-sonnet`
+   - "Haiku" → `claude-haiku`
+   - For GPT models: `gpt-{version}` (e.g. `gpt-5.4`)
+2. **Append the version** from your system prompt: "Opus 4.6" → `claude-opus-4.6`, "Sonnet 4" → `claude-sonnet-4`.
+3. **Do NOT use API date-suffixed IDs** like `claude-sonnet-4-20250514`. Use the short form: `claude-sonnet-4`.
+4. **If you cannot determine your model family, pass `"unknown"`.** Never guess a family you're not confident about.
 
 ## Estimation defaults
 
