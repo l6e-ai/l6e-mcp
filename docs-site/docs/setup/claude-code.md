@@ -105,10 +105,16 @@ The enforcement rule is what teaches the agent the l6e lifecycle. It covers chec
 
 Add the rule to a `CLAUDE.md` file so Claude Code automatically follows the l6e lifecycle every session.
 
-- **User-global** (applies to all projects): `~/.claude/CLAUDE.md`
 - **Project-level** (checked into git, shared with team): `CLAUDE.md` or `.claude/CLAUDE.md` in your project root
+- **User-global** (applies to all projects): `~/.claude/CLAUDE.md`
 
-The up-to-date rule content is at [`.claude/CLAUDE.md`](https://github.com/l6e-ai/l6e-mcp/blob/main/.claude/CLAUDE.md) in the repository. Copy its contents into your `CLAUDE.md`. The rule is rendered from a [single template](https://github.com/l6e-ai/l6e-mcp/blob/main/docs/agent-rules/base.md.j2) — check the repo for the latest version when updating.
+The fastest way to install the rule is from the bundled copy in your `l6e-mcp` package:
+
+```bash
+l6e-mcp install-rules --client claude-code
+```
+
+This merges the l6e rule into `.claude/CLAUDE.md` using section markers (`<!-- l6e:start -->` / `<!-- l6e:end -->`), preserving any existing content in the file. For manual installation, the rule content is also available at [`.claude/CLAUDE.md`](https://github.com/l6e-ai/l6e-mcp/blob/main/.claude/CLAUDE.md) in the repository.
 
 See the [Prompt Guide](../prompt-guide) for always-apply vs on-demand patterns and how to override enforcement per-message.
 

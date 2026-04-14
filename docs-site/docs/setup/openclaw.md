@@ -117,7 +117,13 @@ Add the rule to `AGENTS.md` in the agent workspace so it is loaded every session
 - **All agents (default workspace)**: `~/.openclaw/workspace/AGENTS.md`
 - **Specific agent**: `~/.openclaw/agents/{agent_id}/AGENTS.md`
 
-The up-to-date rule content is at [`.openclaw/AGENTS.md`](https://github.com/l6e-ai/l6e-mcp/blob/main/.openclaw/AGENTS.md) in the repository. Append its contents to your `AGENTS.md`. The rule is rendered from a [single template](https://github.com/l6e-ai/l6e-mcp/blob/main/docs/agent-rules/base.md.j2) — check the repo for the latest version when updating.
+The fastest way to install the rule is from the bundled copy in your `l6e-mcp` package:
+
+```bash
+l6e-mcp install-rules --client openclaw
+```
+
+This writes the rule to `.openclaw/AGENTS.md` in the current directory. For manual installation, the rule content is also available at [`.openclaw/AGENTS.md`](https://github.com/l6e-ai/l6e-mcp/blob/main/.openclaw/AGENTS.md) in the repository.
 
 See the [Prompt Guide](../prompt-guide) for always-apply vs on-demand patterns and how to override enforcement per-message.
 
