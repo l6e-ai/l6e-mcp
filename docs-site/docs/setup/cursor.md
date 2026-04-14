@@ -83,10 +83,16 @@ The enforcement rule is what teaches the agent the l6e lifecycle. It covers chec
 
 Set up a Cursor rule — either globally or per-project — with `alwaysApply: true` so every conversation gets enforcement automatically.
 
-- **Global** (all projects): `~/.cursor/rules/l6e-budget-enforcement.mdc`
 - **Project-level** (checked into git): `.cursor/rules/l6e-budget-enforcement.mdc`
+- **Global** (all projects): `~/.cursor/rules/l6e-budget-enforcement.mdc`
 
-The up-to-date rule content is at [`.cursor/rules/l6e-budget-enforcement.mdc`](https://github.com/l6e-ai/l6e-mcp/blob/main/.cursor/rules/l6e-budget-enforcement.mdc) in the repository. Copy it into one of the paths above. The rule is rendered from a [single template](https://github.com/l6e-ai/l6e-mcp/blob/main/docs/agent-rules/base.md.j2) — check the repo for the latest version when updating.
+The fastest way to install the rule is from the bundled copy in your `l6e-mcp` package:
+
+```bash
+l6e-mcp install-rules --client cursor
+```
+
+This writes the rule to `.cursor/rules/l6e-budget-enforcement.mdc` in the current directory. For manual installation, the rule content is also available at [`.cursor/rules/l6e-budget-enforcement.mdc`](https://github.com/l6e-ai/l6e-mcp/blob/main/.cursor/rules/l6e-budget-enforcement.mdc) in the repository.
 
 See the [Prompt Guide](../prompt-guide) for always-apply vs on-demand patterns and how to override enforcement per-message.
 

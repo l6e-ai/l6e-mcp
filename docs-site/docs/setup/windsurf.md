@@ -81,12 +81,16 @@ The enforcement rule is what teaches the agent the l6e lifecycle. It covers chec
 
 Add the rule to a Windsurf rules file so Cascade automatically follows the l6e lifecycle every session.
 
-Open your rules via `Cmd+Shift+P` → `Windsurf: Open Rules`, or place the file directly:
-
-- **Global**: `~/.windsurf/rules/l6e-budget-enforcement.md`
 - **Project-level** (checked into git): `.windsurf/rules/l6e-budget-enforcement.md`
+- **Global**: `~/.windsurf/rules/l6e-budget-enforcement.md`
 
-The up-to-date rule content is at [`.windsurf/rules/l6e-budget-enforcement.md`](https://github.com/l6e-ai/l6e-mcp/blob/main/.windsurf/rules/l6e-budget-enforcement.md) in the repository. The rule is rendered from a [single template](https://github.com/l6e-ai/l6e-mcp/blob/main/docs/agent-rules/base.md.j2) — check the repo for the latest version when updating.
+The fastest way to install the rule is from the bundled copy in your `l6e-mcp` package:
+
+```bash
+l6e-mcp install-rules --client windsurf
+```
+
+This writes the rule to `.windsurf/rules/l6e-budget-enforcement.md` in the current directory. You can also open your rules via `Cmd+Shift+P` → `Windsurf: Open Rules`. For manual installation, the rule content is available at [`.windsurf/rules/l6e-budget-enforcement.md`](https://github.com/l6e-ai/l6e-mcp/blob/main/.windsurf/rules/l6e-budget-enforcement.md) in the repository.
 
 See the [Prompt Guide](../prompt-guide) for always-apply vs on-demand patterns and how to override enforcement per-message.
 

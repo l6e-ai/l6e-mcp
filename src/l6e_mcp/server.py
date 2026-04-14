@@ -915,6 +915,14 @@ async def l6e_sync_anthropic_usage(
 
 
 def main() -> None:
+    import sys
+
+    if len(sys.argv) > 1 and sys.argv[1] == "install-rules":
+        from l6e_mcp.cli import install_rules_cli
+
+        install_rules_cli(sys.argv[2:])
+        return
+
     _config.ensure_config_template()
     refresh_model_cost_map_async()
     mcp.run()
