@@ -1,12 +1,9 @@
 """Unit tests for the install-rules CLI."""
 from __future__ import annotations
 
-import os
-
 import pytest
 
-from l6e_mcp.cli import _START_MARKER, _END_MARKER, _merge_with_markers, _install_rules
-
+from l6e_mcp.cli import _END_MARKER, _START_MARKER, _install_rules, _merge_with_markers
 
 # ---------------------------------------------------------------------------
 # _merge_with_markers
