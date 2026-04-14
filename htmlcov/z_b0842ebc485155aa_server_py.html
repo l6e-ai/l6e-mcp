@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Coverage for src/l6e_mcp/server.py: 82%</title>
+    <title>Coverage for src/l6e_mcp/server.py: 81%</title>
     <link rel="icon" sizes="32x32" href="favicon_32_cb_c827f16f.png">
     <link rel="stylesheet" href="style_cb_9ff733b0.css" type="text/css">
     <script src="coverage_html_cb_dd2e7eb5.js" defer></script>
@@ -12,7 +12,7 @@
     <div class="content">
         <h1>
             <span class="text">Coverage for </span><b>src&#8201;/&#8201;l6e_mcp&#8201;/&#8201;server.py</b>:
-            <span class="pc_cov">82%</span>
+            <span class="pc_cov">81%</span>
         </h1>
         <aside id="help_panel_wrapper">
             <input id="help_panel_state" type="checkbox">
@@ -54,9 +54,9 @@
             </div>
         </aside>
         <h2>
-            <span class="text">363 statements &nbsp;</span>
+            <span class="text">368 statements &nbsp;</span>
             <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">298<span class="text"> run</span></button>
-            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">65<span class="text"> missing</span></button>
+            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">70<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
         <p class="text">
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_b0842ebc485155aa_session_store_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.5">coverage.py v7.13.5</a>,
-            created at 2026-04-14 16:05 +0000
+            created at 2026-04-14 16:42 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -997,13 +997,21 @@
     <p class="pln"><span class="n"><a id="t915" href="#t915">915</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t916" href="#t916">916</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t917" href="#t917">917</a></span><span class="t"><span class="key">def</span> <span class="nam">main</span><span class="op">(</span><span class="op">)</span> <span class="op">-></span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t918" href="#t918">918</a></span><span class="t">    <span class="nam">_config</span><span class="op">.</span><span class="nam">ensure_config_template</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t919" href="#t919">919</a></span><span class="t">    <span class="nam">refresh_model_cost_map_async</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t920" href="#t920">920</a></span><span class="t">    <span class="nam">mcp</span><span class="op">.</span><span class="nam">run</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t921" href="#t921">921</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t918" href="#t918">918</a></span><span class="t">    <span class="key">import</span> <span class="nam">sys</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t919" href="#t919">919</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t920" href="#t920">920</a></span><span class="t">    <span class="key">if</span> <span class="nam">len</span><span class="op">(</span><span class="nam">sys</span><span class="op">.</span><span class="nam">argv</span><span class="op">)</span> <span class="op">></span> <span class="num">1</span> <span class="key">and</span> <span class="nam">sys</span><span class="op">.</span><span class="nam">argv</span><span class="op">[</span><span class="num">1</span><span class="op">]</span> <span class="op">==</span> <span class="str">"install-rules"</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t921" href="#t921">921</a></span><span class="t">        <span class="key">from</span> <span class="nam">l6e_mcp</span><span class="op">.</span><span class="nam">cli</span> <span class="key">import</span> <span class="nam">install_rules_cli</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t922" href="#t922">922</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t923" href="#t923">923</a></span><span class="t"><span class="key">if</span> <span class="nam">__name__</span> <span class="op">==</span> <span class="str">"__main__"</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t924" href="#t924">924</a></span><span class="t">    <span class="nam">main</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t923" href="#t923">923</a></span><span class="t">        <span class="nam">install_rules_cli</span><span class="op">(</span><span class="nam">sys</span><span class="op">.</span><span class="nam">argv</span><span class="op">[</span><span class="num">2</span><span class="op">:</span><span class="op">]</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t924" href="#t924">924</a></span><span class="t">        <span class="key">return</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t925" href="#t925">925</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t926" href="#t926">926</a></span><span class="t">    <span class="nam">_config</span><span class="op">.</span><span class="nam">ensure_config_template</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t927" href="#t927">927</a></span><span class="t">    <span class="nam">refresh_model_cost_map_async</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t928" href="#t928">928</a></span><span class="t">    <span class="nam">mcp</span><span class="op">.</span><span class="nam">run</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t929" href="#t929">929</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t930" href="#t930">930</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t931" href="#t931">931</a></span><span class="t"><span class="key">if</span> <span class="nam">__name__</span> <span class="op">==</span> <span class="str">"__main__"</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t932" href="#t932">932</a></span><span class="t">    <span class="nam">main</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
 </main>
 <footer>
     <div class="content">
@@ -1013,7 +1021,7 @@
             <a class="nav" href="z_b0842ebc485155aa_session_store_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.5">coverage.py v7.13.5</a>,
-            created at 2026-04-14 16:05 +0000
+            created at 2026-04-14 16:42 +0000
         </p>
     </div>
 </footer>
