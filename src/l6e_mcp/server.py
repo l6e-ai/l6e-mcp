@@ -350,6 +350,64 @@ def _background_sync(
             api_key, endpoint, store=store, deadline=deadline,
         )
 
+_VALID_SERVER_ACTIONS: frozenset[str] = frozenset({"allow", "reroute", "halt"})
+_VALID_BUDGET_PRESSURE: frozenset[str] = frozenset(
+    {"low", "moderate", "high", "critical"}
+)
+
+
+def _finite_non_negative(value: object) -> float | None:
+    """Coerce a server-supplied numeric field to a sane float.
+
+    Returns ``None`` if the value is missing, non-numeric, NaN, infinite,
+    or negative. Used to sanity-check the authorize response before we
+    let its values drive downstream cost accounting — a negative or NaN
+    ``calibrated_cost_usd`` would corrupt the session's spend snapshot.
+    """
+    if value is None:
+        return None
+    try:
+        coerced = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(coerced) or math.isinf(coerced) or coerced < 0:
+        return None
+    return coerced
+
+
+def _sanitize_server_authorize_response(resp: dict) -> dict | None:
+    """Validate a ``/v1/authorize`` response. Returns ``None`` on garbage.
+
+    The server is meant to return a well-formed envelope but we do not
+    trust the wire — a 200 response with a NaN ``calibrated_cost_usd``
+    or a missing ``action`` key would crash or corrupt the local
+    session. Falling back to local auth on sanity failure is the
+    iron-rule "prediction returns garbage → fall back to population
+    prior" path.
+    """
+    if not isinstance(resp, dict):
+        return None
+    action = resp.get("action")
+    if action not in _VALID_SERVER_ACTIONS:
+        return None
+    calibrated_cost = _finite_non_negative(resp.get("calibrated_cost_usd"))
+    if calibrated_cost is None:
+        return None
+    remaining = _finite_non_negative(resp.get("remaining_usd"))
+    if remaining is None:
+        return None
+    pressure = resp.get("budget_pressure")
+    if pressure not in _VALID_BUDGET_PRESSURE:
+        return None
+    # calibration_factor is a float multiplier; server can legitimately
+    # return 1.0 when no calibration exists. Reject NaN/inf/negative but
+    # allow missing (defaulted to 1.0 downstream).
+    factor_raw = resp.get("calibration_factor")
+    if factor_raw is not None and _finite_non_negative(factor_raw) is None:
+        return None
+    return resp
+
+
 async def _try_server_authorize(
     *,
     api_key: str,
@@ -369,7 +427,49 @@ async def _try_server_authorize(
     """Try server-side authorize with calibrated cost factors.
 
     Returns the MCP response dict on success, or None to fall back to local auth.
+
+    Fail-open contract: any exception — remote call, response parsing,
+    local store write — is caught and converted to ``None`` so the
+    caller falls back to local auth. The gate must never break an
+    in-flight agent session because of a cloud hiccup.
     """
+    try:
+        return await _try_server_authorize_inner(
+            api_key=api_key,
+            session=session,
+            store=store,
+            tool_name=tool_name,
+            estimated_tokens=estimated_tokens,
+            estimated_prompt_tokens=estimated_prompt_tokens,
+            estimated_completion_tokens=estimated_completion_tokens,
+            actor_type=actor_type,
+            actor_id=actor_id,
+            actor_name=actor_name,
+            parent_call_id=parent_call_id,
+            call_mode=call_mode,
+            model_override=model_override,
+        )
+    except Exception:
+        _logger.warning("try_server_authorize_failed_fail_open", exc_info=True)
+        return None
+
+
+async def _try_server_authorize_inner(
+    *,
+    api_key: str,
+    session: SessionState,
+    store: LocalSessionStore,
+    tool_name: str,
+    estimated_tokens: int | None,
+    estimated_prompt_tokens: int | None,
+    estimated_completion_tokens: int | None,
+    actor_type: str,
+    actor_id: str | None,
+    actor_name: str | None,
+    parent_call_id: str | None,
+    call_mode: str | None,
+    model_override: str | None = None,
+) -> dict | None:
     billing_model = model_override or session.model
 
     prompt_tokens = estimated_prompt_tokens or estimated_tokens or 2000
@@ -396,6 +496,15 @@ async def _try_server_authorize(
     )
     if server_resp is None:
         return None
+
+    validated = _sanitize_server_authorize_response(server_resp)
+    if validated is None:
+        _logger.warning(
+            "server_authorize_response_invalid",
+            extra={"session_id": session.session_id, "keys": sorted(server_resp.keys())},
+        )
+        return None
+    server_resp = validated
 
     calibrated_cost = Decimal(str(server_resp["calibrated_cost_usd"]))
     call = store.create_call(
@@ -515,6 +624,114 @@ async def l6e_authorize_call(
 
     billing_model = model.strip() if model else session.model
 
+    # Everything past this point is gate/store work that must fail-open.
+    # Input validation above uses ``ToolError`` deliberately — those are
+    # customer-visible contract violations. Past here, any exception
+    # means our gate broke, and per the iron rule we pass through with
+    # ``allow`` so the agent can keep working. See
+    # ``docs/runbooks/fails-open-matrix.md``.
+    try:
+        return await _l6e_authorize_call_impl(
+            store=store,
+            session=session,
+            session_id=session_id,
+            tool_name=tool_name,
+            billing_model=billing_model,
+            estimated_tokens=estimated_tokens,
+            estimated_prompt_tokens=estimated_prompt_tokens,
+            estimated_completion_tokens=estimated_completion_tokens,
+            check_only=check_only,
+            actor_type=actor_type,
+            actor_id=actor_id,
+            actor_name=actor_name,
+            parent_call_id=parent_call_id,
+            call_mode=call_mode,
+            actual_prompt_tokens=actual_prompt_tokens,
+            actual_completion_tokens=actual_completion_tokens,
+        )
+    except ToolError:
+        raise
+    except Exception:
+        _logger.exception(
+            "l6e_authorize_call_failed_fail_open",
+            extra={"session_id": session_id, "tool_name": tool_name},
+        )
+        return _fail_open_allow_response(
+            session=session,
+            store=store,
+            session_id=session_id,
+            check_only=check_only,
+        )
+
+
+def _fail_open_allow_response(
+    *,
+    session: SessionState,
+    store: LocalSessionStore,
+    session_id: str,
+    check_only: bool,
+) -> dict:
+    """Build a safe fail-open response when the gate itself crashes.
+
+    Returns an ``allow`` shaped like a normal authorize response but
+    with ``reason="fail_open:gate_exception"`` so operators can filter
+    for this in logs. The spend snapshot is best-effort; if the store
+    is also broken we return a conservative "budget healthy" snapshot.
+    """
+    remaining: float
+    pressure: str
+    pct_used: float
+    spent_usd: float
+    try:
+        calls = store.list_calls_for_session(session_id)
+        snapshot = _spend_snapshot(session, store=store, calls=calls)
+        remaining = snapshot["remaining_usd"]
+        pressure = snapshot["budget_pressure"]
+        pct_used = snapshot["pct_used"]
+        spent_usd = snapshot["spent_usd"]
+    except Exception:
+        _logger.warning("l6e_fail_open_snapshot_failed", exc_info=True)
+        budget = float(getattr(session.policy, "budget", 0.0) or 0.0)
+        remaining = budget
+        pressure = "low"
+        pct_used = 0.0
+        spent_usd = 0.0
+
+    if check_only:
+        return {
+            "budget_pressure": pressure,
+            "remaining_usd": remaining,
+            "pct_used": pct_used,
+            "reason": "fail_open:gate_exception",
+        }
+    return {
+        "action": "allow",
+        "remaining_usd": remaining,
+        "budget_pressure": pressure,
+        "reason": "fail_open:gate_exception",
+        "spent_usd": spent_usd,
+    }
+
+
+async def _l6e_authorize_call_impl(
+    *,
+    store: LocalSessionStore,
+    session: SessionState,
+    session_id: str,
+    tool_name: str,
+    billing_model: str,
+    estimated_tokens: int,
+    estimated_prompt_tokens: int | None,
+    estimated_completion_tokens: int | None,
+    check_only: bool,
+    actor_type: str,
+    actor_id: str | None,
+    actor_name: str | None,
+    parent_call_id: str | None,
+    call_mode: str | None,
+    actual_prompt_tokens: int | None,
+    actual_completion_tokens: int | None,
+) -> dict:
     if check_only:
         prompt_tokens = estimated_prompt_tokens or estimated_tokens or 2000
         completion_tokens = estimated_completion_tokens or 400
@@ -563,19 +780,23 @@ async def l6e_authorize_call(
 
         worker = _get_telemetry_worker()
         if worker is not None:
-            worker.enqueue(StatusTelemetryPayload(
-                session_id=session_id,
-                model=billing_model,
-                estimated_prompt_tokens=prompt_tokens,
-                estimated_completion_tokens=completion_tokens,
-                raw_projected_cost_usd=float(raw_cost),
-                calibrated_projected_cost_usd=float(estimated_cost),
-                calibration_factor=cached.factor if cached else None,
-                calibration_source=cached.source if cached else None,
-                budget_usd=session.policy.budget,
-                spent_usd=snapshot["spent_usd"],
-                budget_pressure=snapshot["budget_pressure"],
-            ))
+            try:
+                worker.enqueue(StatusTelemetryPayload(
+                    session_id=session_id,
+                    model=billing_model,
+                    estimated_prompt_tokens=prompt_tokens,
+                    estimated_completion_tokens=completion_tokens,
+                    raw_projected_cost_usd=float(raw_cost),
+                    calibrated_projected_cost_usd=float(estimated_cost),
+                    calibration_factor=cached.factor if cached else None,
+                    calibration_source=cached.source if cached else None,
+                    budget_usd=session.policy.budget,
+                    spent_usd=snapshot["spent_usd"],
+                    budget_pressure=snapshot["budget_pressure"],
+                ))
+            except Exception:
+                # Telemetry is fire-and-forget; never fail the gate on it.
+                _logger.warning("status_telemetry_enqueue_failed", exc_info=True)
 
         return result
 

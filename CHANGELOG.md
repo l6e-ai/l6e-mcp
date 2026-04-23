@@ -2,6 +2,18 @@
 
 All notable changes to l6e-mcp are documented here.
 
+## 0.8.0 — 2026-04-23
+
+- **Iron-rule fail-open hardening** (L6E-41). `l6e_authorize_call` now wraps its entire gate path in a fail-open guard — any internal exception (server branch, local gate, calibration cache) degrades to `{"action":"allow","reason":"fail_open:gate_exception"}` rather than surfacing a `ToolError` to the agent. Input-validation errors (unknown session, bad `actor_type`) still raise as before.
+- **Server authorize response sanity check.** `/v1/authorize` responses are now validated for NaN / inf / negative `calibrated_cost_usd` / `remaining_usd`, missing `action`, and invalid `budget_pressure` labels before they drive local spend accounting. Garbage → fall back to local auth.
+- **`latency_deadline_ms` honored on the wire.** `try_remote_authorize` now tightens the per-call HTTP timeout to `min(default, latency_deadline_ms/1000)` so Margin callers get cloud-slow → treat-as-down semantics locally too.
+- **Defensive JSON parse.** Malformed JSON from the gateway now returns `None` (fall-back) instead of crashing the tool.
+
+## 0.7.0 — 2026-04-02
+
+- **Claude Code analytics in `l6e_sync_anthropic_usage`.** New `include_claude_code` flag (default `True`) pulls per-user Claude Code productivity and cost metrics alongside standard Anthropic usage. Response now surfaces `claude_code_records_fetched` / `claude_code_rows_sent` when present. Sync tool timeout raised from 60s to 120s to accommodate the extra pull.
+- **Billing batch management tools.** `l6e_list_billing_batches` returns active import batches (ID, source, row count, cost, import date) for auditing. `l6e_delete_billing_batch` soft-deletes a batch and its truth rows so stale or test imports can be cleaned up and re-imported.
+
 ## 0.6.2 — 2026-03-27
 
 - **Rewritten README for launch.** New lede, dogfooding callout, tighter quick start, free vs pro comparison table, and calibration config docs. Technical depth moved to [docs.l6e.ai](https://docs.l6e.ai).
