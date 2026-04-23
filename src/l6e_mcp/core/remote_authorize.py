@@ -98,8 +98,22 @@ async def try_remote_authorize(
     unset; the SDK/gateway/framework adapters populate them when Margin
     is active. Unset fields are not serialized, preserving the wire shape
     for existing MCP deployments.
+
+    When ``latency_deadline_ms`` is supplied the effective HTTP timeout is
+    the tighter of ``timeout`` and ``latency_deadline_ms / 1000``. This is
+    the iron-rule "cloud slow → treat as down" path: Margin callers that
+    declare a latency budget get a timeout honored locally too, so a
+    200-at-10s never arrives after the customer has already had to
+    degrade.
     """
+    effective_timeout = timeout
+    if latency_deadline_ms is not None and latency_deadline_ms > 0:
+        deadline_seconds = latency_deadline_ms / 1000.0
+        effective_timeout = min(timeout, deadline_seconds)
     url = f"{endpoint}/v1/authorize"
+    # ``_get_async_client`` creates the shared client once; its default
+    # timeout is fixed at first-call time. We pass ``timeout=`` per-call
+    # so ``latency_deadline_ms`` can tighten it dynamically.
     http_client = _get_async_client(timeout)
     body: dict = {
         "session_id": session_id,
@@ -132,6 +146,7 @@ async def try_remote_authorize(
             url,
             json=body,
             headers={"Authorization": f"Bearer {api_key}"},
+            timeout=effective_timeout,
         )
         if resp.status_code != 200:
             logger.debug(
@@ -139,9 +154,18 @@ async def try_remote_authorize(
                 extra={"status": resp.status_code, "body": resp.text[:200]},
             )
             return None
-        return resp.json()
+        try:
+            return resp.json()
+        except Exception:
+            # Malformed JSON from the gateway is just as dangerous as a
+            # 500. Fail-open: caller falls back to local auth.
+            logger.debug("remote_authorize_bad_json", exc_info=True)
+            return None
     except httpx.TimeoutException:
-        logger.debug("remote_authorize_timeout", extra={"url": url})
+        logger.debug(
+            "remote_authorize_timeout",
+            extra={"url": url, "timeout": effective_timeout},
+        )
         return None
     except Exception:
         logger.debug("remote_authorize_failed", exc_info=True)
