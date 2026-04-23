@@ -15,7 +15,7 @@
 | src/l6e\_mcp/core/authorization.py           |       68 |        3 |     96% |110, 126, 181 |
 | src/l6e\_mcp/core/calibration\_cache.py      |       45 |        0 |    100% |           |
 | src/l6e\_mcp/core/exactness.py               |       29 |        0 |    100% |           |
-| src/l6e\_mcp/core/remote\_authorize.py       |       53 |       21 |     60% |32-38, 43-56, 94 |
+| src/l6e\_mcp/core/remote\_authorize.py       |       69 |       21 |     70% |32-38, 43-56, 113 |
 | src/l6e\_mcp/core/session\_report\_worker.py |       38 |        1 |     97% |        45 |
 | src/l6e\_mcp/core/status\_telemetry.py       |       53 |        1 |     98% |        60 |
 | src/l6e\_mcp/outbox.py                       |      105 |        8 |     92% |88-89, 106-107, 135-137, 166 |
@@ -31,7 +31,7 @@
 | src/l6e\_mcp/store/schema.py                 |       17 |        0 |    100% |           |
 | src/l6e\_mcp/store/sessions.py               |      108 |        3 |     97% |139, 193, 216 |
 | src/l6e\_mcp/store/summary.py                |       74 |        5 |     93% |119, 122, 124, 126, 153 |
-| **TOTAL**                                    | **1835** |  **175** | **90%** |           |
+| **TOTAL**                                    | **1851** |  **175** | **91%** |           |
 
 
 ## Setup coverage badge
