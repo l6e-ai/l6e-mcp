@@ -25,7 +25,6 @@ import pytest
 from l6e_mcp.core.remote_authorize import _reset_client, try_remote_authorize
 from l6e_mcp.server import _sanitize_server_authorize_response
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
