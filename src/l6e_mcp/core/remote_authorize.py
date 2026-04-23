@@ -78,8 +78,27 @@ async def try_remote_authorize(
     spent_usd: float,
     session_client: str | None = None,
     timeout: float = _DEFAULT_TIMEOUT,
+    # --- Additive schema (L6E-37). All optional; forwarded only when set.
+    # Token-precision additions (any tier may supply):
+    estimated_prompt_tokens: int | None = None,
+    estimated_completion_tokens: int | None = None,
+    # Margin-tier identity / policy additions:
+    user_id: str | None = None,
+    tenant_id: str | None = None,
+    cohort_hint: str | None = None,
+    request_embedding: list[float] | None = None,
+    latency_deadline_ms: int | None = None,
+    quality_floor: str | None = None,
 ) -> dict | None:
-    """POST to server-side authorize. Returns response dict or None on failure."""
+    """POST to server-side authorize. Returns response dict or None on failure.
+
+    The Margin-tier kwargs (``user_id``, ``tenant_id``, ``cohort_hint``,
+    ``request_embedding``, ``latency_deadline_ms``, ``quality_floor``) are
+    all optional and default to ``None``. MCP callers should leave them
+    unset; the SDK/gateway/framework adapters populate them when Margin
+    is active. Unset fields are not serialized, preserving the wire shape
+    for existing MCP deployments.
+    """
     url = f"{endpoint}/v1/authorize"
     http_client = _get_async_client(timeout)
     body: dict = {
@@ -92,6 +111,22 @@ async def try_remote_authorize(
     }
     if session_client:
         body["client"] = session_client
+    if estimated_prompt_tokens is not None:
+        body["estimated_prompt_tokens"] = estimated_prompt_tokens
+    if estimated_completion_tokens is not None:
+        body["estimated_completion_tokens"] = estimated_completion_tokens
+    if user_id is not None:
+        body["user_id"] = user_id
+    if tenant_id is not None:
+        body["tenant_id"] = tenant_id
+    if cohort_hint is not None:
+        body["cohort_hint"] = cohort_hint
+    if request_embedding is not None:
+        body["request_embedding"] = request_embedding
+    if latency_deadline_ms is not None:
+        body["latency_deadline_ms"] = latency_deadline_ms
+    if quality_floor is not None:
+        body["quality_floor"] = quality_floor
     try:
         resp = await http_client.post(
             url,

@@ -132,6 +132,49 @@ class TestTryRemoteAuthorize:
         assert call_args.kwargs["json"]["estimated_cost_usd"] == 0.01
         assert call_args.kwargs["headers"]["Authorization"] == "Bearer sk-l6e-test"
 
+    async def test_omits_margin_fields_when_unset(self):
+        """Legacy callers (MCP) never send Margin fields — wire shape unchanged."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = _SERVER_ALLOW
+
+        with _mock_async_client(post_return=mock_resp) as mock_get_client:
+            await try_remote_authorize(**_CALL_KWARGS)
+
+        sent = mock_get_client.return_value.post.call_args.kwargs["json"]
+        for field in (
+            "user_id", "tenant_id", "cohort_hint", "request_embedding",
+            "latency_deadline_ms", "quality_floor",
+            "estimated_prompt_tokens", "estimated_completion_tokens",
+        ):
+            assert field not in sent, f"{field} should not be serialized when unset"
+
+    async def test_forwards_margin_fields_when_provided(self):
+        """Callers that opt into the Margin schema see their fields on the wire."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = _SERVER_ALLOW
+
+        margin_kwargs = dict(
+            user_id="u_end_user_123",
+            tenant_id="tenant_acme",
+            cohort_hint="paid",
+            request_embedding=[0.1, -0.2, 0.3],
+            latency_deadline_ms=200,
+            quality_floor="premium",
+            estimated_prompt_tokens=2000,
+            estimated_completion_tokens=500,
+        )
+
+        with _mock_async_client(post_return=mock_resp) as mock_get_client:
+            await try_remote_authorize(**_CALL_KWARGS, **margin_kwargs)
+
+        sent = mock_get_client.return_value.post.call_args.kwargs["json"]
+        for key, expected in margin_kwargs.items():
+            assert sent[key] == expected, (
+                f"expected {key}={expected!r} on wire, got {sent.get(key)!r}"
+            )
+
 
 # ---------------------------------------------------------------------------
 # Integration: server-first branch in l6e_authorize_call
