@@ -17,6 +17,7 @@ an actionable ``action`` or ``budget_pressure`` field.
 """
 from __future__ import annotations
 
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -68,6 +69,74 @@ _CALL_KWARGS = dict(
     budget_usd=5.0,
     spent_usd=0.0,
 )
+
+
+class TestRemoteAuthorizeFailOpenLogging:
+    """Cloud authorize failures should be visible in production log levels."""
+
+    async def test_non_200_response_logs_warning(self, caplog) -> None:
+        mock_resp = MagicMock()
+        mock_resp.status_code = 503
+        mock_resp.text = "gateway unavailable"
+
+        caplog.set_level(logging.WARNING, logger="l6e_mcp.core.remote_authorize")
+        with _mock_async_client(post_return=mock_resp):
+            result = await try_remote_authorize(**_CALL_KWARGS)
+
+        assert result is None
+        record = next(
+            r for r in caplog.records if r.getMessage() == "remote_authorize_rejected"
+        )
+        assert record.levelno == logging.WARNING
+        assert record.status == 503
+        assert record.body == "gateway unavailable"
+
+    async def test_timeout_logs_warning_with_effective_timeout(
+        self, caplog,
+    ) -> None:
+        caplog.set_level(logging.WARNING, logger="l6e_mcp.core.remote_authorize")
+        with _mock_async_client(
+            post_side_effect=httpx.TimeoutException("deadline exceeded"),
+        ):
+            result = await try_remote_authorize(
+                **_CALL_KWARGS, latency_deadline_ms=5,
+            )
+
+        assert result is None
+        record = next(
+            r for r in caplog.records if r.getMessage() == "remote_authorize_timeout"
+        )
+        assert record.levelno == logging.WARNING
+        assert record.url == "https://api.l6e.ai/v1/authorize"
+        assert record.effective_timeout == pytest.approx(0.005)
+
+    async def test_bad_json_logs_warning_with_traceback(self, caplog) -> None:
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.side_effect = ValueError("Expecting value")
+
+        caplog.set_level(logging.WARNING, logger="l6e_mcp.core.remote_authorize")
+        with _mock_async_client(post_return=mock_resp):
+            result = await try_remote_authorize(**_CALL_KWARGS)
+
+        assert result is None
+        record = next(
+            r for r in caplog.records if r.getMessage() == "remote_authorize_bad_json"
+        )
+        assert record.levelno == logging.WARNING
+        assert record.exc_info is not None
+
+    async def test_network_exception_logs_warning_with_traceback(self, caplog) -> None:
+        caplog.set_level(logging.WARNING, logger="l6e_mcp.core.remote_authorize")
+        with _mock_async_client(post_side_effect=RuntimeError("network crashed")):
+            result = await try_remote_authorize(**_CALL_KWARGS)
+
+        assert result is None
+        record = next(
+            r for r in caplog.records if r.getMessage() == "remote_authorize_failed"
+        )
+        assert record.levelno == logging.WARNING
+        assert record.exc_info is not None
 
 
 async def _start_session(mcp_client, budget: float = 5.0) -> str:

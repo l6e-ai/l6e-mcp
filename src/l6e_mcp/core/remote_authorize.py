@@ -172,7 +172,7 @@ async def try_remote_authorize(
             timeout=effective_timeout,
         )
         if resp.status_code != 200:
-            logger.debug(
+            logger.warning(
                 "remote_authorize_rejected",
                 extra={"status": resp.status_code, "body": resp.text[:200]},
             )
@@ -182,14 +182,18 @@ async def try_remote_authorize(
         except Exception:
             # Malformed JSON from the gateway is just as dangerous as a
             # 500. Fail-open: caller falls back to local auth.
-            logger.debug("remote_authorize_bad_json", exc_info=True)
+            logger.warning("remote_authorize_bad_json", exc_info=True)
             return None
     except httpx.TimeoutException:
-        logger.debug(
+        logger.warning(
             "remote_authorize_timeout",
-            extra={"url": url, "timeout": effective_timeout},
+            extra={
+                "url": url,
+                "timeout": effective_timeout,
+                "effective_timeout": effective_timeout,
+            },
         )
         return None
     except Exception:
-        logger.debug("remote_authorize_failed", exc_info=True)
+        logger.warning("remote_authorize_failed", exc_info=True)
         return None
