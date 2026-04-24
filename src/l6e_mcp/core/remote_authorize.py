@@ -89,6 +89,17 @@ async def try_remote_authorize(
     request_embedding: list[float] | None = None,
     latency_deadline_ms: int | None = None,
     quality_floor: str | None = None,
+    # --- Gate-policy additions (L6E-40). All optional; forwarded only when
+    # set. These give the server enough inputs to produce decisions
+    # identical to the in-process ``ConstraintGate``. MCP doesn't set
+    # them today — they're plumbed so SDK callers and future stage-aware
+    # MCP tools can opt into the full core ladder.
+    stage: str | None = None,
+    prompt_complexity: str | None = None,
+    budget_mode: str | None = None,
+    reroute_threshold: float | None = None,
+    stage_overrides: dict[str, str] | None = None,
+    stage_routing: dict[str, str] | None = None,
 ) -> dict | None:
     """POST to server-side authorize. Returns response dict or None on failure.
 
@@ -141,6 +152,18 @@ async def try_remote_authorize(
         body["latency_deadline_ms"] = latency_deadline_ms
     if quality_floor is not None:
         body["quality_floor"] = quality_floor
+    if stage is not None:
+        body["stage"] = stage
+    if prompt_complexity is not None:
+        body["prompt_complexity"] = prompt_complexity
+    if budget_mode is not None:
+        body["budget_mode"] = budget_mode
+    if reroute_threshold is not None:
+        body["reroute_threshold"] = reroute_threshold
+    if stage_overrides is not None:
+        body["stage_overrides"] = stage_overrides
+    if stage_routing is not None:
+        body["stage_routing"] = stage_routing
     try:
         resp = await http_client.post(
             url,
