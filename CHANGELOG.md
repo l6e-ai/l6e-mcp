@@ -2,7 +2,7 @@
 
 All notable changes to l6e-mcp are documented here.
 
-## 0.8.0 — 2026-04-23
+## 0.8.1 — 2026-04-23
 
 - **Iron-rule fail-open hardening** (L6E-41). `l6e_authorize_call` now wraps its entire gate path in a fail-open guard — any internal exception (server branch, local gate, calibration cache) degrades to `{"action":"allow","reason":"fail_open:gate_exception"}` rather than surfacing a `ToolError` to the agent. Input-validation errors (unknown session, bad `actor_type`) still raise as before.
 - **Server authorize response sanity check.** `/v1/authorize` responses are now validated for NaN / inf / negative `calibrated_cost_usd` / `remaining_usd`, missing `action`, and invalid `budget_pressure` labels before they drive local spend accounting. Garbage → fall back to local auth.
