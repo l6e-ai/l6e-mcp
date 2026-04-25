@@ -41,6 +41,11 @@ from l6e_mcp.store.summary import build_session_report
 
 _logger = logging.getLogger(__name__)
 
+# Captured at module import — proxy for MCP server process start time. Used
+# only by the read-only diagnostic tool ``l6e_debug_pricing_state`` to make
+# audit trails unambiguous about which process produced which output.
+_PROCESS_STARTED_UNIX = time.time()
+
 mcp = FastMCP(
     name="l6e-budget",
     instructions=(
@@ -1133,6 +1138,139 @@ async def l6e_sync_anthropic_usage(
     if result.warnings:
         resp["warnings"] = result.warnings
     return resp
+
+
+@mcp.tool(timeout=10)
+async def l6e_debug_pricing_state(
+    probe_models: Annotated[
+        list[str] | None,
+        "Optional list of model IDs to probe through litellm.cost_per_token, l6e.costs.resolve_model_id, and LiteLLMCostEstimator.estimate_with_metadata. Defaults to a representative set of opus-4-* dot/dash forms.",  # noqa: E501
+    ] = None,
+) -> dict:
+    """Read-only diagnostic dump of in-process pricing state. Captures process metadata (PID, uptime, python executable, package versions), litellm's model_cost map source info, presence of specific opus keys, the l6e _LITELLM_BARE_KEYS resolver cache contents for opus-* keys, and per-probe results from cost_per_token / resolve_model_id / estimate_with_metadata. Use to investigate gate decisions that disagree with fresh-process repros. Does not mutate any state."""  # noqa: E501
+    import sys
+    from importlib.metadata import PackageNotFoundError, version as _pkg_version
+
+    import litellm
+    from litellm.litellm_core_utils.get_model_cost_map import (
+        get_model_cost_map_source_info,
+    )
+    from l6e import costs as _l6e_costs
+
+    if probe_models is None:
+        probe_models = [
+            "claude-opus-4-7",
+            "claude-opus-4.7",
+            "claude-opus-4-6",
+            "claude-opus-4.6",
+        ]
+
+    def _pkg(name: str) -> str | None:
+        try:
+            return _pkg_version(name)
+        except PackageNotFoundError:
+            return None
+
+    process_info = {
+        "pid": os.getpid(),
+        "started_at_unix": _PROCESS_STARTED_UNIX,
+        "uptime_seconds": round(time.time() - _PROCESS_STARTED_UNIX, 3),
+        "python_executable": sys.executable,
+        "litellm_path": str(Path(litellm.__file__).resolve()),
+        "l6e_costs_path": str(Path(_l6e_costs.__file__).resolve()),
+        "litellm_version": _pkg("litellm"),
+        "l6e_version": _pkg("l6e"),
+    }
+
+    try:
+        source_info = get_model_cost_map_source_info()
+    except Exception as exc:  # noqa: BLE001 — diagnostic must never raise
+        source_info = {"error_type": type(exc).__name__, "error": str(exc)[:200]}
+
+    model_cost_state = {
+        "total_models": len(litellm.model_cost),
+        "claude_opus_4_7_present": "claude-opus-4-7" in litellm.model_cost,
+        "claude_opus_4_6_present": "claude-opus-4-6" in litellm.model_cost,
+        "claude_opus_4_5_present": "claude-opus-4-5" in litellm.model_cost,
+        "claude_opus_4_1_present": "claude-opus-4-1" in litellm.model_cost,
+        "claude_4_opus_20250514_present": "claude-4-opus-20250514" in litellm.model_cost,
+    }
+
+    def _snapshot_bare_keys() -> dict:
+        bare = _l6e_costs._LITELLM_BARE_KEYS
+        if bare is None:
+            return {"populated": False, "size": 0}
+        opus_keys = sorted(
+            orig for tokens, orig in bare if "opus" in tokens
+        )
+        return {
+            "populated": True,
+            "size": len(bare),
+            "opus_keys_total": len(opus_keys),
+            "opus_4_7_keys": [k for k in opus_keys if "4-7" in k],
+            "opus_4_6_keys": [k for k in opus_keys if "4-6" in k],
+            "opus_keys_sample": opus_keys[:30],
+        }
+
+    bare_state_before = _snapshot_bare_keys()
+
+    estimator = LiteLLMCostEstimator()
+    probes: list[dict] = []
+    for mid in probe_models:
+        try:
+            p, c = litellm.cost_per_token(
+                model=mid, prompt_tokens=1000, completion_tokens=200
+            )
+            direct: dict = {"ok": True, "cost_usd": float(p + c)}
+        except Exception as exc:  # noqa: BLE001 — diagnostic must never raise
+            direct = {
+                "ok": False,
+                "error_type": type(exc).__name__,
+                "error": str(exc)[:160],
+            }
+        try:
+            resolved = _l6e_costs.resolve_model_id(mid)
+        except Exception as exc:  # noqa: BLE001
+            resolved = f"<error: {type(exc).__name__}: {str(exc)[:80]}>"
+        try:
+            meta = estimator.estimate_with_metadata(
+                model=mid,
+                prompt_tokens=1000,
+                completion_tokens=200,
+                emit_warning=False,
+            )
+            estimate_summary: dict = {
+                "pricing_source": meta.pricing_source,
+                "resolved_model": meta.resolved_model,
+                "model_pricing_known": meta.model_pricing_known,
+                "warning_emitted": meta.warning is not None,
+                "warning_text": meta.warning[:140] if meta.warning else None,
+                "cost_usd": float(meta.cost_usd),
+            }
+        except Exception as exc:  # noqa: BLE001
+            estimate_summary = {
+                "error_type": type(exc).__name__,
+                "error": str(exc)[:200],
+            }
+        probes.append(
+            {
+                "model_id": mid,
+                "direct_cost_per_token": direct,
+                "resolve_model_id_result": resolved,
+                "estimate_with_metadata": estimate_summary,
+            }
+        )
+
+    bare_state_after = _snapshot_bare_keys()
+
+    return {
+        "process": process_info,
+        "litellm_cost_map_source_info": source_info,
+        "litellm_model_cost_state": model_cost_state,
+        "l6e_bare_keys_cache_before_probes": bare_state_before,
+        "l6e_bare_keys_cache_after_probes": bare_state_after,
+        "probes": probes,
+    }
 
 
 def main() -> None:
