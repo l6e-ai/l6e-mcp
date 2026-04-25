@@ -1140,7 +1140,18 @@ async def l6e_sync_anthropic_usage(
     return resp
 
 
-@mcp.tool(timeout=10)
+# ``l6e_debug_pricing_state`` is a read-only diagnostic tool used to investigate
+# gate decisions that disagree with fresh-process repros (cf. L6E-86). It is
+# *not* a canonical agent-facing tool — agents should never call it as part of
+# normal budget enforcement, and exposing it via ``list_tools()`` by default
+# would pollute the schema every client sees.
+#
+# The function body is defined unconditionally so the diagnostic path is
+# preserved in-tree (cf. L6E-87: the resolver self-match failure mode would
+# recur the same diagnostic chain if registration timing ever drifts again).
+# Only MCP registration is gated: set ``L6E_DEBUG_TOOLS=1`` in the client's
+# server env (e.g. ``.cursor/mcp.json``) and restart the MCP server to opt the
+# tool into ``list_tools()`` for a diagnostic session.
 async def l6e_debug_pricing_state(
     probe_models: Annotated[
         list[str] | None,
@@ -1149,13 +1160,14 @@ async def l6e_debug_pricing_state(
 ) -> dict:
     """Read-only diagnostic dump of in-process pricing state. Captures process metadata (PID, uptime, python executable, package versions), litellm's model_cost map source info, presence of specific opus keys, the l6e _LITELLM_BARE_KEYS resolver cache contents for opus-* keys, and per-probe results from cost_per_token / resolve_model_id / estimate_with_metadata. Use to investigate gate decisions that disagree with fresh-process repros. Does not mutate any state."""  # noqa: E501
     import sys
-    from importlib.metadata import PackageNotFoundError, version as _pkg_version
+    from importlib.metadata import PackageNotFoundError
+    from importlib.metadata import version as _pkg_version
 
     import litellm
+    from l6e import costs as _l6e_costs
     from litellm.litellm_core_utils.get_model_cost_map import (
         get_model_cost_map_source_info,
     )
-    from l6e import costs as _l6e_costs
 
     if probe_models is None:
         probe_models = [
@@ -1271,6 +1283,12 @@ async def l6e_debug_pricing_state(
         "l6e_bare_keys_cache_after_probes": bare_state_after,
         "probes": probes,
     }
+
+
+if os.environ.get("L6E_DEBUG_TOOLS") == "1":
+    # Opt-in registration only. Keeps the canonical agent-facing tool surface
+    # minimal in normal operation (pinned by ``test_tool_discovery_exposes_canonical_names_only``).
+    l6e_debug_pricing_state = mcp.tool(timeout=10)(l6e_debug_pricing_state)
 
 
 def main() -> None:
