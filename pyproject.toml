@@ -30,6 +30,18 @@ Homepage = "https://github.com/l6e-ai/l6e-mcp"
 Repository = "https://github.com/l6e-ai/l6e-mcp"
 Documentation = "https://docs.l6e.ai"
 
+# Local-workspace dependency override: resolves ``l6e`` from the sibling
+# ``../l6e`` source instead of PyPI for ``uv sync`` / ``uv run`` in this
+# workspace. The published ``l6e-mcp`` wheel still declares ``l6e>=0.4.0``
+# against PyPI (see ``[project] dependencies``); ``[tool.uv.sources]`` is
+# uv-specific metadata that downstream installers ignore.
+#
+# Editable install means edits to ``../l6e/src/l6e/*.py`` are picked up
+# on the next process start without a reinstall — required for iterating
+# on the cost estimator / pricing pipeline without publishing to PyPI.
+[tool.uv.sources]
+l6e = { path = "../l6e", editable = true }
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
