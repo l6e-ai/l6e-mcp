@@ -2,10 +2,14 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import subprocess
+import sys
 
 import pytest
 
+from l6e_mcp.server import l6e_debug_pricing_state
 from l6e_mcp.session_store import LocalSessionStore
 
 SESSION_ID_RE = re.compile(r"^session_.+_\d{4}-\d{2}-\d{2}_[0-9a-f]{8}$")
@@ -45,6 +49,87 @@ async def test_tool_discovery_exposes_canonical_names_only(client):
         "l6e_delete_billing_batch",
         "l6e_sync_anthropic_usage",
     }
+
+
+def test_debug_pricing_tool_registration_is_env_gated():
+    script = """
+import asyncio
+import json
+from fastmcp.client import Client
+from l6e_mcp.server import mcp
+
+async def main():
+    async with Client(transport=mcp) as client:
+        tools = await client.list_tools()
+        print(json.dumps(sorted(tool.name for tool in tools)))
+
+asyncio.run(main())
+"""
+    base_env = {**os.environ, "L6E_DEBUG_TOOLS": "0"}
+    enabled_env = {**os.environ, "L6E_DEBUG_TOOLS": "1"}
+
+    hidden = subprocess.run(
+        [sys.executable, "-c", script],
+        check=True,
+        capture_output=True,
+        env=base_env,
+        text=True,
+    )
+    visible = subprocess.run(
+        [sys.executable, "-c", script],
+        check=True,
+        capture_output=True,
+        env=enabled_env,
+        text=True,
+    )
+
+    assert "l6e_debug_pricing_state" not in json.loads(hidden.stdout)
+    assert "l6e_debug_pricing_state" in json.loads(visible.stdout)
+
+
+async def test_debug_pricing_state_returns_process_pricing_and_probe_state():
+    result = await l6e_debug_pricing_state(probe_models=["gpt-4o", "not-a-real-l6e-model"])
+
+    assert result["process"]["pid"] == os.getpid()
+    assert result["process"]["python_executable"] == sys.executable
+    assert result["process"]["started_at_unix"] > 0
+    assert result["process"]["uptime_seconds"] >= 0
+    assert result["process"]["litellm_path"]
+    assert result["process"]["l6e_costs_path"]
+    assert result["process"]["litellm_version"]
+    assert result["process"]["l6e_version"]
+
+    assert isinstance(result["litellm_cost_map_source_info"], dict)
+    assert result["litellm_model_cost_state"]["total_models"] > 0
+    assert isinstance(result["litellm_model_cost_state"]["claude_opus_4_7_present"], bool)
+    assert isinstance(result["litellm_model_cost_state"]["claude_opus_4_6_present"], bool)
+
+    before = result["l6e_bare_keys_cache_before_probes"]
+    after = result["l6e_bare_keys_cache_after_probes"]
+    assert set(before) >= {"populated", "size"}
+    assert set(after) >= {"populated", "size"}
+    if after["populated"]:
+        assert set(after) >= {
+            "opus_keys_total",
+            "opus_4_7_keys",
+            "opus_4_6_keys",
+            "opus_keys_sample",
+        }
+
+    probes = {probe["model_id"]: probe for probe in result["probes"]}
+    assert set(probes) == {"gpt-4o", "not-a-real-l6e-model"}
+    for probe in probes.values():
+        assert set(probe) == {
+            "model_id",
+            "direct_cost_per_token",
+            "resolve_model_id_result",
+            "estimate_with_metadata",
+        }
+        assert "ok" in probe["direct_cost_per_token"]
+        assert probe["resolve_model_id_result"] is None or isinstance(
+            probe["resolve_model_id_result"], str
+        )
+        assert isinstance(probe["estimate_with_metadata"], dict)
 
 
 async def test_session_start_requires_model(client):
