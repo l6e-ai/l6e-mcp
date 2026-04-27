@@ -1334,3 +1334,113 @@ async def test_run_end_does_not_write_log_if_finalize_fails(client, tmp_path, mo
     assert not end2.is_error
     entries = [json.loads(line) for line in log_path.read_text().splitlines() if line.strip()]
     assert len(entries) == 1, f"Expected 1 log entry, got {len(entries)}"
+
+
+# ---------------------------------------------------------------------------
+# l6e_sync_anthropic_usage admin_key resolution
+#
+# These tests pin the env-fallback contract that landed during L6E-86
+# pre-flight on 2026-04-26: callers can omit ``admin_key`` from the tool
+# call and the server reads ANTHROPIC_ADMIN_KEY from its environment
+# instead. This keeps the admin key out of MCP tool-call payloads and
+# chat transcripts, which is the security property the design relies on.
+# ---------------------------------------------------------------------------
+
+
+def _fake_sync_and_upload_factory(captured: dict):
+    """Return a fake ``sync_and_upload`` that records its kwargs and returns a stub.
+
+    Used to assert what admin_key the tool actually passed downstream
+    without any network I/O. The returned ``SyncResult`` is a real
+    dataclass instance so the tool's response-building path stays valid
+    even when new fields are added to ``SyncResult``.
+    """
+    from decimal import Decimal
+
+    from l6e_mcp.anthropic_sync import SyncResult
+
+    def fake(*, admin_key, date_start, date_end, api_key_id=None, include_claude_code=True):
+        captured["admin_key"] = admin_key
+        captured["date_start"] = date_start
+        captured["date_end"] = date_end
+        captured["api_key_id"] = api_key_id
+        captured["include_claude_code"] = include_claude_code
+        return SyncResult(
+            buckets_fetched=0,
+            rows_sent=0,
+            total_cost_usd=Decimal("0"),
+            server_response={},
+            warnings=[],
+            source="cost_report",
+        )
+
+    return fake
+
+
+async def test_sync_anthropic_usage_reads_admin_key_from_env_when_arg_empty(client, monkeypatch):
+    sentinel = "sk-ant-admin01-test-env-fallback-only"
+    captured: dict = {}
+
+    monkeypatch.setattr(
+        "l6e_mcp.anthropic_sync.sync_and_upload",
+        _fake_sync_and_upload_factory(captured),
+    )
+    monkeypatch.setenv("ANTHROPIC_ADMIN_KEY", sentinel)
+
+    result = await client.call_tool(
+        "l6e_sync_anthropic_usage",
+        {"date_start": "2026-04-25", "date_end": "2026-04-26"},
+        raise_on_error=False,
+    )
+    assert not result.is_error, f"tool call failed: {result}"
+    assert captured["admin_key"] == sentinel
+
+
+async def test_sync_anthropic_usage_arg_takes_precedence_over_env(client, monkeypatch):
+    env_sentinel = "sk-ant-admin01-from-env"
+    arg_sentinel = "sk-ant-admin01-from-arg"
+    captured: dict = {}
+
+    monkeypatch.setattr(
+        "l6e_mcp.anthropic_sync.sync_and_upload",
+        _fake_sync_and_upload_factory(captured),
+    )
+    monkeypatch.setenv("ANTHROPIC_ADMIN_KEY", env_sentinel)
+
+    result = await client.call_tool(
+        "l6e_sync_anthropic_usage",
+        {
+            "date_start": "2026-04-25",
+            "date_end": "2026-04-26",
+            "admin_key": arg_sentinel,
+        },
+        raise_on_error=False,
+    )
+    assert not result.is_error, f"tool call failed: {result}"
+    assert captured["admin_key"] == arg_sentinel
+
+
+async def test_sync_anthropic_usage_errors_when_arg_empty_and_env_unset(client, monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_ADMIN_KEY", raising=False)
+
+    result = await client.call_tool(
+        "l6e_sync_anthropic_usage",
+        {"date_start": "2026-04-25", "date_end": "2026-04-26"},
+        raise_on_error=False,
+    )
+    assert result.is_error
+    msg = str(result.content[0].text if result.content else "")
+    assert "ANTHROPIC_ADMIN_KEY" in msg
+
+
+async def test_sync_anthropic_usage_rejects_non_admin_key_prefix(client, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_ADMIN_KEY", "sk-ant-api03-not-an-admin-key")
+
+    result = await client.call_tool(
+        "l6e_sync_anthropic_usage",
+        {"date_start": "2026-04-25", "date_end": "2026-04-26"},
+        raise_on_error=False,
+    )
+    assert result.is_error
+    msg = str(result.content[0].text if result.content else "")
+    assert "sk-ant-admin" in msg
