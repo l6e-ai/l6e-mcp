@@ -1075,16 +1075,30 @@ async def l6e_delete_billing_batch(
 
 @mcp.tool(timeout=120)
 async def l6e_sync_anthropic_usage(
-    admin_key: Annotated[
-        str,
-        "Anthropic Admin API key (sk-ant-admin...). Prefer a short-lived key: create for import, revoke in Anthropic after sync.",  # noqa: E501 — Annotated string is the MCP parameter description shown verbatim to agents; keep one line for schema / AI tooling
-    ],
     date_start: Annotated[str, "Start date YYYY-MM-DD"],
     date_end: Annotated[str, "End date YYYY-MM-DD"],
+    admin_key: Annotated[
+        str,
+        "Anthropic Admin API key (sk-ant-admin...). Optional — falls back to the ANTHROPIC_ADMIN_KEY environment variable on the MCP server when omitted, so the key never appears in tool-call payloads or chat transcripts. Prefer a short-lived key: create for import, revoke in Anthropic after sync.",  # noqa: E501 — Annotated string is the MCP parameter description shown verbatim to agents; keep one line for schema / AI tooling
+    ] = "",
     api_key_id: Annotated[str, "Optional: filter by Anthropic API key ID"] = "",
     include_claude_code: Annotated[bool, "Also sync Claude Code analytics (per-user productivity and cost metrics). Enabled by default."] = True,  # noqa: E501
 ) -> dict:
-    """Sync Anthropic usage data locally via the Admin API. The admin key stays on your machine — only normalized billing rows are sent to l6e cloud. Requires an Anthropic organization account. Best practice: create a dedicated Admin key, run sync, then delete (revoke) the key in Anthropic; pasted keys may remain in assistant chat history."""  # noqa: E501
+    """Sync Anthropic usage data locally via the Admin API. The admin key stays on your machine — only normalized billing rows are sent to l6e cloud. Requires an Anthropic organization account. Best practice: set ANTHROPIC_ADMIN_KEY in the MCP server's environment (e.g. .cursor/mcp.json) so the key never appears in tool-call payloads; or pass admin_key explicitly. Either way, prefer a short-lived key: create for import, revoke in Anthropic after sync."""  # noqa: E501
+    # Env fallback so callers can avoid pasting the admin key into tool args
+    # (which leak into chat transcripts). The internal sync_and_upload function
+    # still requires admin_key as a positional kwarg — env resolution lives
+    # only at this user-facing surface, in one place.
+    if not admin_key:
+        admin_key = os.environ.get("ANTHROPIC_ADMIN_KEY", "")
+    if not admin_key:
+        raise ToolError(
+            "admin_key was not provided and ANTHROPIC_ADMIN_KEY is not set in the MCP "
+            "server's environment. Either pass admin_key explicitly, or set "
+            "ANTHROPIC_ADMIN_KEY in the env block of your MCP client config "
+            "(e.g. .cursor/mcp.json) and restart the MCP server. "
+            "Get an Admin API key at https://platform.claude.com/settings/keys"
+        )
     if not admin_key.startswith("sk-ant-admin"):
         raise ToolError(
             "admin_key must be an Anthropic Admin API key (starts with sk-ant-admin...). "

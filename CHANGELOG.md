@@ -2,6 +2,12 @@
 
 All notable changes to l6e-mcp are documented here.
 
+## 0.8.3 - 2026-04-27
+- **Anthropic Key Protection**: proper handling and error for anthropic admin key sync
+
+## 0.8.2 - 2026-04-25
+- **Debug tools**: New debug tools available when env var is set (`L6E_DEBUG_TOOLS = true`)
+
 ## 0.8.1 — 2026-04-23
 
 - **Iron-rule fail-open hardening** (L6E-41). `l6e_authorize_call` now wraps its entire gate path in a fail-open guard — any internal exception (server branch, local gate, calibration cache) degrades to `{"action":"allow","reason":"fail_open:gate_exception"}` rather than surfacing a `ToolError` to the agent. Input-validation errors (unknown session, bad `actor_type`) still raise as before.
