@@ -2,6 +2,9 @@
 
 All notable changes to l6e-mcp are documented here.
 
+## 0.8.3 - 2026-04-27
+- **Anthropic Key Protection**: proper handling and error for anthropic admin key sync
+
 ## 0.8.2 - 2026-04-25
 - **Debug tools**: New debug tools available when env var is set (`L6E_DEBUG_TOOLS = true`)
 
