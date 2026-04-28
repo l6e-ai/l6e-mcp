@@ -1,15 +1,16 @@
 """Tests for l6e_mcp.anthropic_sync — local Anthropic Admin API fetch + upload."""
 from __future__ import annotations
 
+import warnings
 from datetime import UTC, datetime
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
+from l6e.costs import LiteLLMCostEstimator
 
 from l6e_mcp.anthropic_sync import (
-    _TOKEN_PRICING,
     ClaudeCodeRecord,
     UsageBucket,
     _claude_code_records_to_row_dicts,
@@ -29,23 +30,23 @@ from l6e_mcp.anthropic_sync import (
 class TestComputeCost:
     def test_sonnet_basic(self):
         cost = _compute_cost(
-            input_tokens=1_000_000,
-            output_tokens=1_000_000,
+            input_tokens=100_000,
+            output_tokens=100_000,
             cache_read_tokens=0,
             cache_creation_tokens=0,
             model="claude-sonnet-4-6",
         )
-        assert cost == Decimal("18.00000000")
+        assert cost == Decimal("1.80000000")
 
     def test_opus_basic(self):
         cost = _compute_cost(
-            input_tokens=1_000_000,
-            output_tokens=1_000_000,
+            input_tokens=100_000,
+            output_tokens=100_000,
             cache_read_tokens=0,
             cache_creation_tokens=0,
-            model="claude-opus-4-0",
+            model="claude-opus-4-7",
         )
-        assert cost == Decimal("90.00000000")
+        assert cost == Decimal("3.00000000")
 
     def test_zero_tokens(self):
         cost = _compute_cost(0, 0, 0, 0, "claude-sonnet-4-6")
@@ -55,25 +56,49 @@ class TestComputeCost:
         cost = _compute_cost(
             input_tokens=0,
             output_tokens=0,
-            cache_read_tokens=1_000_000,
-            cache_creation_tokens=1_000_000,
+            cache_read_tokens=100_000,
+            cache_creation_tokens=100_000,
             model="claude-sonnet-4-6",
         )
-        assert cost == Decimal("4.05000000")
+        assert cost == Decimal("0.40500000")
 
 
 class TestResolvePricing:
     def test_exact_model(self):
-        assert _resolve_pricing("claude-sonnet-4-6") == _TOKEN_PRICING["claude-sonnet-4-6"]
+        pricing = _resolve_pricing("claude-sonnet-4-6")
+        assert pricing.rates_per_million["input"] == Decimal("3.00")
+        assert pricing.rates_per_million["output"] == Decimal("15.00")
+        assert pricing.pricing_source == "litellm_table"
 
-    def test_opus_fallback(self):
-        assert _resolve_pricing("some-new-opus-model") == _TOKEN_PRICING["claude-opus-4-0"]
+    def test_resolve_pricing_does_not_substring_match_to_different_rate_sibling(self):
+        pricing = _resolve_pricing("claude-opus-4-7")
+        assert pricing.rates_per_million["input"] == Decimal("5.00")
+        assert pricing.rates_per_million["output"] == Decimal("25.00")
+        assert pricing.rates_per_million["input"] != Decimal("15.00")
 
-    def test_haiku_fallback(self):
-        assert _resolve_pricing("claude-haiku-99") == _TOKEN_PRICING["claude-haiku-4-5"]
+    def test_gate_and_reconciliation_agree_on_pilot_model_rates(self):
+        estimator = LiteLLMCostEstimator()
+        for model in ["claude-opus-4-7", "claude-sonnet-4-5", "claude-haiku-4-5"]:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                gate_meta = estimator.estimate_with_metadata(
+                    model=model,
+                    prompt_tokens=1000,
+                    completion_tokens=500,
+                )
+            recon_pricing = _resolve_pricing(model)
+            recon_cost = (
+                Decimal(1000) * recon_pricing.rates_per_million["input"]
+                + Decimal(500) * recon_pricing.rates_per_million["output"]
+            ) / Decimal("1000000")
+            assert abs(gate_meta.cost_usd - recon_cost) < Decimal("0.0001")
 
-    def test_unknown_model_uses_sonnet_fallback(self):
-        assert _resolve_pricing("totally-unknown-model") == _TOKEN_PRICING["claude-sonnet-4-6"]
+    def test_unknown_model_uses_explicit_fallback_signal(self):
+        pricing = _resolve_pricing("totally-unknown-model")
+        assert pricing.pricing_source == "fallback_rate"
+        assert pricing.pricing_confidence == "low"
+        assert pricing.model_pricing_known is False
+        assert pricing.pricing_model is None
 
 
 # ---------------------------------------------------------------------------
@@ -109,6 +134,9 @@ class TestBucketsToRowDicts:
         assert row["input_tokens"] == 1300  # 1000 + 200 + 100
         assert row["output_tokens"] == 500
         assert Decimal(row["cost_usd"]) > Decimal("0")
+        assert row["pricing_source"] in {"litellm_table", "litellm_table_resolved"}
+        assert row["pricing_confidence"] == "high"
+        assert row["model_pricing_known"] is True
 
     def test_zero_token_bucket_skipped(self):
         rows = _usage_buckets_to_row_dicts([_make_bucket(
@@ -122,6 +150,14 @@ class TestBucketsToRowDicts:
         rows1 = _usage_buckets_to_row_dicts([b])
         rows2 = _usage_buckets_to_row_dicts([b])
         assert rows1[0]["content_fingerprint"] == rows2[0]["content_fingerprint"]
+
+    def test_unknown_pricing_signal_is_included(self):
+        rows = _usage_buckets_to_row_dicts([_make_bucket(model="totally-unknown-model")])
+
+        assert rows[0]["pricing_source"] == "fallback_rate"
+        assert rows[0]["pricing_confidence"] == "low"
+        assert rows[0]["model_pricing_known"] is False
+        assert "pricing_warning" in rows[0]
 
     def test_multiple_buckets(self):
         rows = _usage_buckets_to_row_dicts([

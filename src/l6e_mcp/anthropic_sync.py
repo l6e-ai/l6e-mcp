@@ -23,6 +23,8 @@ from decimal import Decimal
 from typing import Any
 
 import httpx
+import litellm
+from l6e.costs import LiteLLMCostEstimator
 
 from l6e_mcp import config as _config
 
@@ -39,41 +41,11 @@ _RETRY_BASE_SECONDS = 2.0
 _CENTS_PER_DOLLAR = Decimal("100")
 _MAX_CONCURRENT_DAYS = 5
 
-_TOKEN_PRICING: dict[str, dict[str, Decimal]] = {
-    "claude-opus-4-0": {
-        "input": Decimal("15.00"),
-        "output": Decimal("75.00"),
-        "cache_read": Decimal("1.50"),
-        "cache_creation": Decimal("18.75"),
-    },
-    "claude-sonnet-4-5": {
-        "input": Decimal("3.00"),
-        "output": Decimal("15.00"),
-        "cache_read": Decimal("0.30"),
-        "cache_creation": Decimal("3.75"),
-    },
-    "claude-sonnet-4-6": {
-        "input": Decimal("3.00"),
-        "output": Decimal("15.00"),
-        "cache_read": Decimal("0.30"),
-        "cache_creation": Decimal("3.75"),
-    },
-    "claude-haiku-4-5": {
-        "input": Decimal("0.80"),
-        "output": Decimal("4.00"),
-        "cache_read": Decimal("0.08"),
-        "cache_creation": Decimal("1.00"),
-    },
-    "claude-haiku-3-5": {
-        "input": Decimal("0.25"),
-        "output": Decimal("1.25"),
-        "cache_read": Decimal("0.025"),
-        "cache_creation": Decimal("0.30"),
-    },
-}
-
 _PER_MILLION = Decimal("1000000")
-_FALLBACK_PRICING = _TOKEN_PRICING["claude-sonnet-4-6"]
+_FALLBACK_COST_PER_1K_TOKENS = Decimal("0.01")
+_COST_ESTIMATOR = LiteLLMCostEstimator(
+    fallback_cost_per_1k_tokens=float(_FALLBACK_COST_PER_1K_TOKENS),
+)
 
 
 @dataclass(frozen=True)
@@ -125,6 +97,16 @@ class SyncResult:
     source: str = "cost_report"
     claude_code_records_fetched: int = 0
     claude_code_rows_sent: int = 0
+
+
+@dataclass(frozen=True)
+class PricingResolution:
+    rates_per_million: dict[str, Decimal]
+    pricing_source: str
+    pricing_confidence: str
+    model_pricing_known: bool
+    pricing_model: str | None
+    warning: str | None
 
 
 # ---------------------------------------------------------------------------
@@ -273,18 +255,74 @@ def _cost_rows_to_row_dicts(rows: list[CostRow]) -> list[dict[str, Any]]:
 # usage_report/messages — fallback (token counts, self-computed cost)
 # ---------------------------------------------------------------------------
 
-def _resolve_pricing(model: str) -> dict[str, Decimal]:
-    normalized = model.lower().strip()
-    for key, pricing in _TOKEN_PRICING.items():
-        if key in normalized or normalized in key:
-            return pricing
-    if "opus" in normalized:
-        return _TOKEN_PRICING["claude-opus-4-0"]
-    if "haiku" in normalized:
-        return _TOKEN_PRICING["claude-haiku-4-5"]
-    if "sonnet" in normalized:
-        return _TOKEN_PRICING["claude-sonnet-4-6"]
-    return _FALLBACK_PRICING
+def _rate_per_million(raw_rate: Any) -> Decimal:
+    return Decimal(str(raw_rate)) * _PER_MILLION
+
+
+def _fallback_pricing() -> dict[str, Decimal]:
+    fallback_rate = _FALLBACK_COST_PER_1K_TOKENS * Decimal("1000")
+    return {
+        "input": fallback_rate,
+        "output": fallback_rate,
+        "cache_read": fallback_rate,
+        "cache_creation": fallback_rate,
+    }
+
+
+def _rates_from_litellm_model(model: str) -> dict[str, Decimal]:
+    cost_info = litellm.model_cost.get(model) or litellm.model_cost.get(model.lower())
+    if cost_info is None:
+        raise KeyError(model)
+
+    input_rate = cost_info["input_cost_per_token"]
+    output_rate = cost_info["output_cost_per_token"]
+    cache_read_rate = cost_info.get("cache_read_input_token_cost", input_rate)
+    cache_creation_rate = cost_info.get("cache_creation_input_token_cost", input_rate)
+    return {
+        "input": _rate_per_million(input_rate),
+        "output": _rate_per_million(output_rate),
+        "cache_read": _rate_per_million(cache_read_rate),
+        "cache_creation": _rate_per_million(cache_creation_rate),
+    }
+
+
+def _resolve_pricing(model: str) -> PricingResolution:
+    meta = _COST_ESTIMATOR.estimate_with_metadata(
+        model=model,
+        prompt_tokens=1000,
+        completion_tokens=500,
+        emit_warning=False,
+    )
+    pricing_model = meta.resolved_model or (
+        model if meta.pricing_source == "litellm_table" else None
+    )
+    if pricing_model is not None:
+        try:
+            rates = _rates_from_litellm_model(pricing_model)
+        except KeyError:
+            logger.warning(
+                "Resolved pricing model %s for %s is missing from LiteLLM cost map",
+                pricing_model,
+                model,
+            )
+        else:
+            return PricingResolution(
+                rates_per_million=rates,
+                pricing_source=meta.pricing_source,
+                pricing_confidence=meta.pricing_confidence,
+                model_pricing_known=meta.model_pricing_known,
+                pricing_model=pricing_model,
+                warning=meta.warning,
+            )
+
+    return PricingResolution(
+        rates_per_million=_fallback_pricing(),
+        pricing_source=meta.pricing_source,
+        pricing_confidence=meta.pricing_confidence,
+        model_pricing_known=meta.model_pricing_known,
+        pricing_model=None,
+        warning=meta.warning,
+    )
 
 
 def _compute_cost(
@@ -293,13 +331,31 @@ def _compute_cost(
     cache_read_tokens: int,
     cache_creation_tokens: int,
     model: str,
+    pricing: PricingResolution | None = None,
 ) -> Decimal:
-    pricing = _resolve_pricing(model)
+    pricing = pricing or _resolve_pricing(model)
+    if pricing.pricing_model is not None:
+        try:
+            prompt_cost, completion_cost = litellm.cost_per_token(
+                model=pricing.pricing_model,
+                prompt_tokens=input_tokens + cache_read_tokens + cache_creation_tokens,
+                completion_tokens=output_tokens,
+                cache_read_input_tokens=cache_read_tokens,
+                cache_creation_input_tokens=cache_creation_tokens,
+            )
+            return Decimal(str(prompt_cost + completion_cost)).quantize(Decimal("0.00000001"))
+        except Exception:
+            logger.warning(
+                "LiteLLM cost calculation failed for %s; using resolved token rates",
+                pricing.pricing_model,
+                exc_info=True,
+            )
+
     cost = (
-        Decimal(input_tokens) * pricing["input"]
-        + Decimal(output_tokens) * pricing["output"]
-        + Decimal(cache_read_tokens) * pricing["cache_read"]
-        + Decimal(cache_creation_tokens) * pricing["cache_creation"]
+        Decimal(input_tokens) * pricing.rates_per_million["input"]
+        + Decimal(output_tokens) * pricing.rates_per_million["output"]
+        + Decimal(cache_read_tokens) * pricing.rates_per_million["cache_read"]
+        + Decimal(cache_creation_tokens) * pricing.rates_per_million["cache_creation"]
     ) / _PER_MILLION
     return cost.quantize(Decimal("0.00000001"))
 
@@ -409,14 +465,15 @@ def _usage_buckets_to_row_dicts(buckets: list[UsageBucket]) -> list[dict[str, An
                 and b.cache_creation_tokens == 0:
             continue
 
+        pricing = _resolve_pricing(b.model)
         cost = _compute_cost(
             b.input_tokens, b.output_tokens,
             b.cache_read_tokens, b.cache_creation_tokens,
             b.model,
+            pricing,
         )
         total_input = b.input_tokens + b.cache_read_tokens + b.cache_creation_tokens
-
-        rows.append({
+        row = {
             "provider": "anthropic",
             "model_used": b.model,
             "input_tokens": total_input if total_input > 0 else None,
@@ -428,7 +485,15 @@ def _usage_buckets_to_row_dicts(buckets: list[UsageBucket]) -> list[dict[str, An
             "started_at": b.starting_at.timestamp(),
             "finished_at": b.ending_at.timestamp(),
             "content_fingerprint": _usage_fingerprint(b, cost),
-        })
+            "pricing_source": pricing.pricing_source,
+            "pricing_confidence": pricing.pricing_confidence,
+            "model_pricing_known": pricing.model_pricing_known,
+        }
+        if pricing.pricing_model is not None and pricing.pricing_model != b.model:
+            row["resolved_model"] = pricing.pricing_model
+        if pricing.warning:
+            row["pricing_warning"] = pricing.warning
+        rows.append(row)
     return rows
 
 

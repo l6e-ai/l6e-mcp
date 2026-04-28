@@ -96,3 +96,7 @@ Two modes for sub-agents depending on whether they share the parent's budget:
 - One session per task; do not reuse a `session_id` across separate user requests.
 - Never recover or infer `session_id` from transcripts, terminal history, or screenshots.
 - If no live `session_id` exists for the current task, start a new session immediately.
+
+## Model pricing fallback resolvers (L6E-89)
+
+Changes under `mcp/src/l6e_mcp/` that add or alter **fallback** logic mapping a model id string to token rates (anything after an exact table miss) must pass the checklist in `pivot-docs/cost-benchmark-margin-thesis/07-fallback-resolver-audit.md` and update that audit in the same PR. Precedent: [L6E-88](https://linear.app/l6e/issue/L6E-88). If you find this pattern in code you are touching, even outside your immediate scope, file a Linear ticket and link it to [L6E-89](https://linear.app/l6e/issue/L6E-89) instead of fixing inline.
