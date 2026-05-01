@@ -78,7 +78,7 @@ async def try_remote_authorize(
     spent_usd: float,
     session_client: str | None = None,
     timeout: float = _DEFAULT_TIMEOUT,
-    # --- Additive schema (L6E-37). All optional; forwarded only when set.
+    # --- Additive schema. All optional; forwarded only when set.
     # Token-precision additions (any tier may supply):
     estimated_prompt_tokens: int | None = None,
     estimated_completion_tokens: int | None = None,
@@ -89,7 +89,7 @@ async def try_remote_authorize(
     request_embedding: list[float] | None = None,
     latency_deadline_ms: int | None = None,
     quality_floor: str | None = None,
-    # --- Gate-policy additions (L6E-40). All optional; forwarded only when
+    # --- Gate-policy additions. All optional; forwarded only when
     # set. These give the server enough inputs to produce decisions
     # identical to the in-process ``ConstraintGate``. MCP doesn't set
     # them today — they're plumbed so SDK callers and future stage-aware

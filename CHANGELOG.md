@@ -2,6 +2,12 @@
 
 All notable changes to l6e-mcp are documented here.
 
+## 0.8.5 - 2026-04-27
+**Support coldstart**: Tests and support for coldstart for l6e margin.
+
+## 0.8.4 - 2026-04-28
+**Misc Bug Fixes**: Minor fixes and test coverage fixes.
+
 ## 0.8.3 - 2026-04-27
 - **Anthropic Key Protection**: proper handling and error for anthropic admin key sync
 
