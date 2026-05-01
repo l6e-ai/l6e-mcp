@@ -5,4 +5,4 @@ import os
 # on a network fetch to raw.githubusercontent.com at import time.
 os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 
-__version__ = "0.8.4"
+__version__ = "0.8.5"
