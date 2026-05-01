@@ -297,6 +297,26 @@ class TestResponseSanityCheck:
         assert _sanitize_server_authorize_response([]) is None  # type: ignore[arg-type]
         assert _sanitize_server_authorize_response("nope") is None  # type: ignore[arg-type]
 
+    def test_allows_known_coldstart_source(self) -> None:
+        for source in ("prior", "shrunk", "warm", "prior_unavailable"):
+            resp = {**_VALID_SERVER_RESP, "coldstart_source": source}
+            assert _sanitize_server_authorize_response(resp) is not None, source
+
+    def test_allows_missing_coldstart_source(self) -> None:
+        """Non-Margin responses do not include the field at all; absence
+        must not trigger fallback."""
+        resp = {**_VALID_SERVER_RESP}
+        resp.pop("coldstart_source", None)
+        assert _sanitize_server_authorize_response(resp) is not None
+
+    def test_rejects_unknown_coldstart_source(self) -> None:
+        """L6E-47 nibble: unknown labels indicate either a server bug or
+        a stale gate vs server skew; falling back to local is safer than
+        leaking a label downstream that the metrics pipeline can't
+        bucket."""
+        bad = {**_VALID_SERVER_RESP, "coldstart_source": "lukewarm"}
+        assert _sanitize_server_authorize_response(bad) is None
+
 
 class TestServerGarbageFallsBackToLocal:
     """End-to-end: a 200 with garbage should trigger local-auth fallback,

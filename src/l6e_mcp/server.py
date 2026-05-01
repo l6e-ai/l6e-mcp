@@ -360,6 +360,10 @@ _VALID_BUDGET_PRESSURE: frozenset[str] = frozenset(
     {"low", "moderate", "high", "critical"}
 )
 
+_VALID_COLDSTART_SOURCES: frozenset[str] = frozenset(
+    {"prior", "shrunk", "warm", "prior_unavailable"}
+)
+
 
 def _finite_non_negative(value: object) -> float | None:
     """Coerce a server-supplied numeric field to a sane float.
@@ -409,6 +413,11 @@ def _sanitize_server_authorize_response(resp: dict) -> dict | None:
     # allow missing (defaulted to 1.0 downstream).
     factor_raw = resp.get("calibration_factor")
     if factor_raw is not None and _finite_non_negative(factor_raw) is None:
+        return None
+    # L6E-47 nibble: ``coldstart_source`` is optional (only emitted on
+    # Margin-tier responses) but if present must be in the enum.
+    coldstart_source = resp.get("coldstart_source")
+    if coldstart_source is not None and coldstart_source not in _VALID_COLDSTART_SOURCES:
         return None
     return resp
 
