@@ -1164,13 +1164,13 @@ async def l6e_sync_anthropic_usage(
 
 
 # ``l6e_debug_pricing_state`` is a read-only diagnostic tool used to investigate
-# gate decisions that disagree with fresh-process repros (cf. L6E-86). It is
+# gate decisions that disagree with fresh-process repros. It is
 # *not* a canonical agent-facing tool — agents should never call it as part of
 # normal budget enforcement, and exposing it via ``list_tools()`` by default
 # would pollute the schema every client sees.
 #
 # The function body is defined unconditionally so the diagnostic path is
-# preserved in-tree (cf. L6E-87: the resolver self-match failure mode would
+# preserved in-tree (the resolver self-match failure mode would
 # recur the same diagnostic chain if registration timing ever drifts again).
 # Only MCP registration is gated: set ``L6E_DEBUG_TOOLS=1`` in the client's
 # server env (e.g. ``.cursor/mcp.json``) and restart the MCP server to opt the
