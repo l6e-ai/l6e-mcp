@@ -1339,7 +1339,7 @@ async def test_run_end_does_not_write_log_if_finalize_fails(client, tmp_path, mo
 # ---------------------------------------------------------------------------
 # l6e_sync_anthropic_usage admin_key resolution
 #
-# These tests pin the env-fallback contract that landed during L6E-86
+# These tests pin the env-fallback contract that landed
 # pre-flight on 2026-04-26: callers can omit ``admin_key`` from the tool
 # call and the server reads ANTHROPIC_ADMIN_KEY from its environment
 # instead. This keeps the admin key out of MCP tool-call payloads and

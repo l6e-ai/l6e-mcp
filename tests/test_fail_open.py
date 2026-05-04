@@ -1,4 +1,4 @@
-"""Iron-rule tests for MCP server authorize path (L6E-41).
+"""Iron-rule tests for MCP server authorize path.
 
 Companion to ``l6e/tests/unit/test_fail_open.py`` (SDK side). Covers
 the cloud-facing failure modes from the iron-rule matrix in
@@ -310,7 +310,7 @@ class TestResponseSanityCheck:
         assert _sanitize_server_authorize_response(resp) is not None
 
     def test_rejects_unknown_coldstart_source(self) -> None:
-        """L6E-47 nibble: unknown labels indicate either a server bug or
+        """unknown labels indicate either a server bug or
         a stale gate vs server skew; falling back to local is safer than
         leaking a label downstream that the metrics pipeline can't
         bucket."""
